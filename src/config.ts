@@ -36,13 +36,19 @@ export const config = {
   minConfluence: num('MIN_CONFLUENCE', 60),
   analysisIntervalMs: num('ANALYSIS_INTERVAL_MS', 60000),
 
-  // Integrations / auth
+  // Integrations
   webhookSecret: str('WEBHOOK_SECRET', ''),
-  dashboardToken: str('DASHBOARD_TOKEN', ''),
   bitunixApiKey: str('BITUNIX_API_KEY', ''),
   bitunixApiSecret: str('BITUNIX_API_SECRET', ''),
-} as const;
 
-/** True only when live mode is requested AND credentials are present. */
-export const canTradeLive =
-  config.tradingMode === 'live' && !!config.bitunixApiKey && !!config.bitunixApiSecret;
+  // Auth & persistence
+  // Signing/encryption key for sessions and stored secrets. MUST be set (and
+  // stable) in production, or sessions reset and stored API secrets become
+  // unreadable after every restart.
+  appSecret: str('APP_SECRET', ''),
+  // After the first (bootstrap) account exists, new registrations require this
+  // code. Leave blank to allow only the single bootstrap owner to register.
+  registrationCode: str('REGISTRATION_CODE', ''),
+  // Where users/settings JSON is persisted. On Railway, point a volume here.
+  dataDir: str('RAILWAY_VOLUME_MOUNT_PATH', '') || str('DATA_DIR', 'data'),
+} as const;

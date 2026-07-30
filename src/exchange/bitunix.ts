@@ -6,7 +6,7 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import type { Candle, Side } from '../types.js';
-import { config } from '../config.js';
+import { runtime } from '../runtime.js';
 import { logger } from '../logger.js';
 
 const BASE_URL = 'https://fapi.bitunix.com';
@@ -52,9 +52,9 @@ function sign(nonce: string, timestamp: string, queryString: string, body: strin
   // Bitunix double-hash scheme: digest = sha256(nonce+ts+apiKey+query+body),
   // sign = sha256(digest + secret).
   const digest = createHash('sha256')
-    .update(nonce + timestamp + config.bitunixApiKey + queryString + body)
+    .update(nonce + timestamp + runtime.apiKey + queryString + body)
     .digest('hex');
-  return createHash('sha256').update(digest + config.bitunixApiSecret).digest('hex');
+  return createHash('sha256').update(digest + runtime.apiSecret).digest('hex');
 }
 
 async function signedPost(path: string, payload: Record<string, unknown>): Promise<any> {
@@ -65,7 +65,7 @@ async function signedPost(path: string, payload: Record<string, unknown>): Promi
   const res = await fetch(`${BASE_URL}${path}`, {
     method: 'POST',
     headers: {
-      'api-key': config.bitunixApiKey,
+      'api-key': runtime.apiKey,
       nonce,
       timestamp,
       sign: signature,
@@ -99,7 +99,7 @@ export async function placeLiveOrder(req: LiveOrderRequest): Promise<{ orderId: 
     qty: String(req.qty),
     tpPrice: String(req.takeProfit),
     slPrice: String(req.stopLoss),
-    leverage: String(config.leverage),
+    leverage: String(runtime.leverage),
   });
   const orderId = json?.data?.orderId ?? json?.orderId ?? 'unknown';
   logger.trade(`LIVE ORDER accepted id=${orderId}`);

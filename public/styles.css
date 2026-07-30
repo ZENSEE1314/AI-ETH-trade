@@ -121,3 +121,38 @@ th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: upp
 
 footer { text-align: center; padding: 20px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--border); }
 footer code { background: var(--bg-card); padding: 2px 6px; border-radius: 4px; }
+
+/* --- Auth page ------------------------------------------------------------ */
+.auth-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+.auth-card { width: 100%; max-width: 400px; background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); padding: 32px; }
+.auth-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+.auth-brand h1 { font-size: 22px; }
+.auth-card .philosophy { font-size: 11px; margin-bottom: 22px; }
+.auth-tabs { display: flex; gap: 6px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
+.auth-tab { background: none; border: none; color: var(--muted); font-weight: 600; font-size: 14px; padding: 10px 14px; cursor: pointer; border-bottom: 2px solid transparent; }
+.auth-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+#authForm { display: flex; flex-direction: column; gap: 14px; }
+#authForm label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
+#authForm input { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 11px 12px; color: var(--text); font-size: 14px; font-family: var(--mono); }
+#authForm input:focus { outline: none; border-color: var(--accent); }
+.btn-primary { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 12px; font-size: 14px; font-weight: 700; cursor: pointer; margin-top: 4px; }
+.btn-primary:hover { filter: brightness(1.08); }
+.auth-note { font-size: 12px; color: var(--accent); }
+.auth-error { color: var(--red); font-size: 13px; min-height: 18px; margin-top: 12px; text-align: center; }
+.auth-foot { color: var(--muted); font-size: 11px; text-align: center; margin-top: 8px; }
+
+/* --- Settings tab --------------------------------------------------------- */
+.settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 24px; }
+@media (max-width: 700px) { .settings-grid { grid-template-columns: 1fr; } }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.field input, .field select { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; color: var(--text); font-size: 14px; font-family: var(--mono); }
+.field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
+.field .hint { font-size: 11px; color: var(--muted); text-transform: none; letter-spacing: 0; }
+.settings-actions { display: flex; align-items: center; gap: 14px; margin-top: 20px; }
+.settings-actions .btn-primary { margin: 0; padding: 11px 22px; }
+#settingsMsg { font-size: 13px; }
+.live-warning { grid-column: 1 / -1; background: rgba(255,176,32,0.1); border: 1px solid rgba(255,176,32,0.4); color: var(--amber); border-radius: 8px; padding: 12px 14px; font-size: 13px; }
+.btn-logout { background: var(--bg-card); border: 1px solid var(--border); color: var(--muted); border-radius: 8px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+.btn-logout:hover { color: var(--red); border-color: var(--red); }
+.user-chip { font-size: 13px; color: var(--muted); margin-right: 4px; }

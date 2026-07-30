@@ -3,7 +3,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { Candle, Position, RiskDecision, Signal, Trade } from '../types.js';
-import { config } from '../config.js';
+import { runtime } from '../runtime.js';
 
 export function openPaperPosition(signal: Signal, risk: RiskDecision): Position {
   return {
@@ -14,7 +14,7 @@ export function openPaperPosition(signal: Signal, risk: RiskDecision): Position 
     stopLoss: signal.stopLoss,
     takeProfit: signal.takeProfit,
     sizeContracts: risk.positionSizeContracts,
-    leverage: config.leverage,
+    leverage: runtime.leverage,
     liquidationPrice: risk.liquidationPrice,
     openedAt: Date.now(),
     mode: 'paper',

@@ -65,6 +65,24 @@ Production build:
 npm run build && npm start
 ```
 
+## Accounts & the Settings page
+
+The dashboard is gated by login. On first visit, `/login.html` lets you create the
+**owner account** (the first registration is always allowed). After that, new
+sign-ups require `REGISTRATION_CODE` — leave it blank to keep the app single-user.
+
+Once signed in, the **Settings** tab lets you enter your **Bitunix API key &
+secret** and tune trading params (mode, leverage, risk %, daily-loss cap,
+confluence) without touching env vars. The secret is **encrypted at rest**
+(AES-256-GCM) and never returned to the browser.
+
+Persistence:
+- Users and settings are stored as JSON under `DATA_DIR`.
+- Set `APP_SECRET` to a long, stable random string so sessions and the encrypted
+  API secret survive restarts.
+- On Railway, **mount a volume** so `DATA_DIR` (`RAILWAY_VOLUME_MOUNT_PATH`)
+  persists across redeploys — otherwise accounts reset on each deploy.
+
 ## Configuration (`.env`)
 
 | Var | Default | Meaning |
@@ -80,8 +98,10 @@ npm run build && npm start
 | `MIN_CONFLUENCE` | `60` | Minimum signal score (0–100) |
 | `ANALYSIS_INTERVAL_MS` | `60000` | Self-analysis poll interval (0 = off) |
 | `WEBHOOK_SECRET` | — | Shared secret for TradingView alerts |
-| `DASHBOARD_TOKEN` | — | Optional gate for dashboard/API |
-| `BITUNIX_API_KEY` / `BITUNIX_API_SECRET` | — | Required only for live mode |
+| `APP_SECRET` | — | Signs sessions + encrypts stored API secret (set a stable random string) |
+| `REGISTRATION_CODE` | — | Code required for sign-ups after the owner account |
+| `DATA_DIR` | `data` | Where users/settings persist (use a Railway volume) |
+| `BITUNIX_API_KEY` / `BITUNIX_API_SECRET` | — | Optional seed; usually set via the Settings page instead |
 
 ## TradingView integration
 

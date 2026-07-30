@@ -20,6 +20,8 @@
       <span class="badge" id="modeBadge">paper</span>
       <span class="badge" id="liveBadge">live off</span>
       <span class="badge" id="connBadge">connecting…</span>
+      <span class="user-chip" id="userChip"></span>
+      <button class="btn-logout" id="logoutBtn">Log out</button>
     </div>
   </header>
 
@@ -42,6 +44,7 @@
       <button class="tab" data-tab="journal">Journal</button>
       <button class="tab" data-tab="curriculum">Playbook</button>
       <button class="tab" data-tab="logs">Logs</button>
+      <button class="tab" data-tab="settings">Settings</button>
     </nav>
 
     <section class="tabpane active" id="tab-live">
@@ -75,6 +78,61 @@
 
     <section class="tabpane" id="tab-logs">
       <div class="panel"><h2>Engine Logs</h2><div id="logs" class="logs"></div></div>
+    </section>
+
+    <section class="tabpane" id="tab-settings">
+      <div class="panel">
+        <h2>Bitunix API &amp; Trading Settings</h2>
+        <form id="settingsForm">
+          <div class="settings-grid">
+            <div class="field">
+              <label for="apiKey">Bitunix API Key</label>
+              <input type="text" id="apiKey" name="apiKey" placeholder="paste your API key" autocomplete="off" spellcheck="false" />
+              <span class="hint" id="apiKeyHint"></span>
+            </div>
+            <div class="field">
+              <label for="apiSecret">Bitunix API Secret</label>
+              <input type="password" id="apiSecret" name="apiSecret" placeholder="paste your API secret" autocomplete="off" />
+              <span class="hint" id="apiSecretHint">Stored encrypted. Leave blank to keep the current secret.</span>
+            </div>
+            <div class="field">
+              <label for="tradingMode">Trading Mode</label>
+              <select id="tradingMode" name="tradingMode">
+                <option value="paper">Paper (simulated — safe)</option>
+                <option value="live">Live (real orders on Bitunix)</option>
+              </select>
+              <span class="hint">Live needs a valid key + secret above.</span>
+            </div>
+            <div class="field">
+              <label for="accountEquityUsdt">Account Equity (USDT)</label>
+              <input type="number" id="accountEquityUsdt" name="accountEquityUsdt" min="1" step="1" />
+            </div>
+            <div class="field">
+              <label for="leverage">Leverage</label>
+              <input type="number" id="leverage" name="leverage" min="1" max="125" step="1" />
+            </div>
+            <div class="field">
+              <label for="riskPerTradePct">Risk Per Trade (%)</label>
+              <input type="number" id="riskPerTradePct" name="riskPerTradePct" min="0.1" max="100" step="0.1" />
+            </div>
+            <div class="field">
+              <label for="maxDailyLossPct">Max Daily Loss (%)</label>
+              <input type="number" id="maxDailyLossPct" name="maxDailyLossPct" min="0.1" max="100" step="0.1" />
+            </div>
+            <div class="field">
+              <label for="minConfluence">Min Confluence (0–100)</label>
+              <input type="number" id="minConfluence" name="minConfluence" min="0" max="100" step="1" />
+            </div>
+            <div class="live-warning" id="liveWarning">
+              ⚠️ Live mode places real leveraged orders. At high leverage a ~2% adverse move can liquidate you. Start with tiny size.
+            </div>
+          </div>
+          <div class="settings-actions">
+            <button type="submit" class="btn-primary">Save Settings</button>
+            <span id="settingsMsg" class="muted"></span>
+          </div>
+        </form>
+      </div>
     </section>
   </main>
 

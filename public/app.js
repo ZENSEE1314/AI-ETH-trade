@@ -138,7 +138,66 @@ function connect() {
   es.onerror = () => { $('connBadge').textContent = 'reconnecting…'; $('connBadge').className = 'badge off'; };
 }
 
+// --- Auth: user chip, logout, 401 handling --------------------------------
+function onUnauthorized(res) {
+  if (res && res.status === 401) { location.href = '/login.html'; return true; }
+  return false;
+}
+
+async function loadUser() {
+  try {
+    const me = await fetch('/auth/me').then((r) => r.json());
+    if (!me.user) { location.href = '/login.html'; return; }
+    $('userChip').textContent = me.user.username;
+  } catch { /* ignore */ }
+}
+
+$('logoutBtn').addEventListener('click', async () => {
+  await fetch('/auth/logout', { method: 'POST' });
+  location.href = '/login.html';
+});
+
+// --- Settings -------------------------------------------------------------
+const settingsFields = ['tradingMode', 'accountEquityUsdt', 'leverage', 'riskPerTradePct', 'maxDailyLossPct', 'minConfluence'];
+
+async function loadSettings() {
+  const res = await fetch(`/api/settings${qs}`, { headers: authHeaders });
+  if (onUnauthorized(res)) return;
+  const s = await res.json();
+  settingsFields.forEach((k) => { if ($(k) && s[k] !== undefined) $(k).value = s[k]; });
+  $('apiKey').value = '';
+  $('apiKey').placeholder = s.apiKeyMasked ? `current: ${s.apiKeyMasked}` : 'paste your API key';
+  $('apiKeyHint').textContent = s.apiKeyMasked ? 'A key is set. Leave blank to keep it.' : 'No API key set yet.';
+  $('apiSecretHint').textContent = s.apiSecretSet
+    ? 'A secret is set (encrypted). Leave blank to keep it.'
+    : 'No secret set. Required for live trading.';
+}
+
+$('settingsForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const msg = $('settingsMsg');
+  const payload = {};
+  settingsFields.forEach((k) => { const v = $(k).value; if (v !== '') payload[k] = k === 'tradingMode' ? v : Number(v); });
+  if ($('apiKey').value.trim() !== '') payload.apiKey = $('apiKey').value.trim();
+  if ($('apiSecret').value !== '') payload.apiSecret = $('apiSecret').value;
+
+  if (payload.tradingMode === 'live') {
+    if (!confirm('Enable LIVE trading? Real leveraged orders will be placed on Bitunix. Continue?')) return;
+  }
+  msg.textContent = 'Saving…'; msg.className = 'muted';
+  const res = await fetch(`/api/settings${qs}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders },
+    body: JSON.stringify(payload),
+  });
+  if (onUnauthorized(res)) return;
+  const data = await res.json();
+  if (data.ok) { msg.textContent = 'Saved ✓'; msg.className = 'pos-pnl'; $('apiSecret').value = ''; loadSettings(); }
+  else { msg.textContent = data.error || 'Save failed'; msg.className = 'neg-pnl'; }
+});
+
 // --- Init -----------------------------------------------------------------
-fetch(`/api/state${qs}`, { headers: authHeaders }).then((r) => r.json()).then(renderState).catch(() => {});
-loadJournal(); loadCurriculum(); loadLogs(); connect();
+loadUser();
+fetch(`/api/state${qs}`, { headers: authHeaders }).then((r) => { if (onUnauthorized(r)) return; return r.json(); }).then((s) => s && renderState(s)).catch(() => {});
+loadJournal(); loadCurriculum(); loadLogs(); loadSettings(); connect();
 setInterval(loadLogs, 15000);

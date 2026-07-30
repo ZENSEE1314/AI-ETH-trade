@@ -5,6 +5,7 @@
 
 import type { RiskDecision, Signal } from '../types.js';
 import { config } from '../config.js';
+import { runtime } from '../runtime.js';
 
 // Bitunix cross-margin maintenance margin rate is small; we use a conservative
 // buffer so a stop always sits INSIDE the liquidation price, never beyond it.
@@ -34,7 +35,7 @@ export function assessRisk(signal: Signal, ctx: RiskContext): RiskDecision {
   });
 
   // --- Hard kill switches ----------------------------------------------------
-  const dailyLossLimit = ctx.equityUsdt * (config.maxDailyLossPct / 100);
+  const dailyLossLimit = ctx.equityUsdt * (runtime.maxDailyLossPct / 100);
   if (-ctx.dayPnlUsdt >= dailyLossLimit) {
     return reject(
       `KILL SWITCH: daily loss cap hit (${ctx.dayPnlUsdt.toFixed(2)} / -${dailyLossLimit.toFixed(2)} USDT). No new trades today.`,
@@ -52,8 +53,8 @@ export function assessRisk(signal: Signal, ctx: RiskContext): RiskDecision {
   }
 
   // --- Setup quality gates ---------------------------------------------------
-  if (signal.confluence < config.minConfluence) {
-    return reject(`Confluence ${signal.confluence} < required ${config.minConfluence}.`);
+  if (signal.confluence < runtime.minConfluence) {
+    return reject(`Confluence ${signal.confluence} < required ${runtime.minConfluence}.`);
   }
   if (signal.riskReward < config.minRiskReward) {
     return reject(`R:R ${signal.riskReward} < required ${config.minRiskReward}.`);
@@ -70,20 +71,20 @@ export function assessRisk(signal: Signal, ctx: RiskContext): RiskDecision {
   // If the stop sits beyond the liquidation price, you get liquidated BEFORE
   // your stop — meaning your "1% risk" is a lie. Reject rather than pretend.
   const stopDistancePct = stopDistance / signal.entry;
-  const liquidationDistancePct = 1 / config.leverage - MAINTENANCE_MARGIN_RATE;
+  const liquidationDistancePct = 1 / runtime.leverage - MAINTENANCE_MARGIN_RATE;
   if (stopDistancePct >= liquidationDistancePct) {
     return reject(
-      `Stop is ${(stopDistancePct * 100).toFixed(2)}% away but ${config.leverage}x liquidates at ` +
+      `Stop is ${(stopDistancePct * 100).toFixed(2)}% away but ${runtime.leverage}x liquidates at ` +
         `~${(liquidationDistancePct * 100).toFixed(2)}%. Setup would be liquidated before the stop — ` +
         `reduce leverage or widen the invalidation. Rejected.`,
     );
   }
 
   // --- Position sizing (risk-based, leverage-independent for loss size) -------
-  const riskUsdt = ctx.equityUsdt * (config.riskPerTradePct / 100);
+  const riskUsdt = ctx.equityUsdt * (runtime.riskPerTradePct / 100);
   const positionSizeContracts = riskUsdt / stopDistance; // ETH units
   const notionalUsdt = positionSizeContracts * signal.entry;
-  const marginUsdt = notionalUsdt / config.leverage;
+  const marginUsdt = notionalUsdt / runtime.leverage;
 
   if (marginUsdt > ctx.equityUsdt) {
     return reject(`Required margin ${marginUsdt.toFixed(2)} exceeds equity ${ctx.equityUsdt.toFixed(2)}.`);
@@ -96,7 +97,7 @@ export function assessRisk(signal: Signal, ctx: RiskContext): RiskDecision {
     notionalUsdt: round(notionalUsdt, 2),
     marginUsdt: round(marginUsdt, 2),
     riskUsdt: round(riskUsdt, 2),
-    liquidationPrice: round(liquidationPrice(signal.side, signal.entry, config.leverage), 2),
+    liquidationPrice: round(liquidationPrice(signal.side, signal.entry, runtime.leverage), 2),
   };
 }
 

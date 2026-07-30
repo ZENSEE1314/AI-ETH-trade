@@ -3,7 +3,8 @@
 
 import { EventEmitter } from 'node:events';
 import type { Candle, Position, Signal, Trade } from '../types.js';
-import { config, canTradeLive } from '../config.js';
+import { config } from '../config.js';
+import { runtime, canTradeLive } from '../runtime.js';
 import { logger } from '../logger.js';
 import { generateSignal, type MarketSnapshot } from '../strategy/signal.js';
 import { buildBias } from '../strategy/bias.js';
@@ -33,11 +34,15 @@ export class TradeEngine extends EventEmitter {
   private journal = new Journal();
   private openPositions: Position[] = [];
   private recentSignals: Signal[] = [];
-  private startEquity = config.accountEquityUsdt;
   private lastPx = 0;
   private lastBias = 'n/a';
   private running = false;
   private timer: NodeJS.Timeout | null = null;
+
+  /** Base equity comes from settings so it reflects UI changes on restart. */
+  get startEquity(): number {
+    return runtime.accountEquityUsdt;
+  }
 
   get equity(): number {
     return this.startEquity + this.journal.stats().netPnlUsdt;
@@ -46,7 +51,7 @@ export class TradeEngine extends EventEmitter {
   start(): void {
     if (this.running || config.analysisIntervalMs <= 0) return;
     this.running = true;
-    logger.info(`Engine started in ${config.tradingMode.toUpperCase()} mode (live ${canTradeLive ? 'ENABLED' : 'disabled'}).`);
+    logger.info(`Engine started in ${runtime.tradingMode.toUpperCase()} mode (live ${canTradeLive() ? 'ENABLED' : 'disabled'}).`);
     void this.cycle();
     this.timer = setInterval(() => void this.cycle(), config.analysisIntervalMs);
   }
@@ -118,7 +123,7 @@ export class TradeEngine extends EventEmitter {
 
     const position = openPaperPosition(signal, decision);
 
-    if (canTradeLive) {
+    if (canTradeLive()) {
       placeLiveOrder({
         symbol: signal.symbol,
         side: signal.side,
@@ -153,15 +158,15 @@ export class TradeEngine extends EventEmitter {
 
   state(): EngineState {
     const ctx = this.riskContext();
-    const dailyLimit = ctx.equityUsdt * (config.maxDailyLossPct / 100);
+    const dailyLimit = ctx.equityUsdt * (runtime.maxDailyLossPct / 100);
     const weeklyLimit = ctx.equityUsdt * (config.maxWeeklyLossPct / 100);
     const dailyHit = -ctx.dayPnlUsdt >= dailyLimit;
     const weeklyHit = -ctx.weekPnlUsdt >= weeklyLimit;
 
     return {
       running: this.running,
-      mode: config.tradingMode,
-      liveEnabled: canTradeLive,
+      mode: runtime.tradingMode,
+      liveEnabled: canTradeLive(),
       symbol: config.symbol,
       startEquity: this.startEquity,
       equity: round(this.equity, 2),

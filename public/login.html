@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI-ETH-trade · Sign in</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>" />
+</head>
+<body>
+  <div class="auth-wrap">
+    <div class="auth-card">
+      <div class="auth-brand"><span class="logo">📈</span><h1>AI-ETH-trade</h1></div>
+      <p class="philosophy">Bias &gt; Context &gt; Liquidity &gt; Structure &gt; Timing &gt; Execution &gt; Risk</p>
+
+      <div class="auth-tabs">
+        <button class="auth-tab active" data-mode="login">Log in</button>
+        <button class="auth-tab" data-mode="register">Register</button>
+      </div>
+
+      <form id="authForm" autocomplete="off">
+        <label>Username<input type="text" id="username" name="username" required minlength="3" maxlength="32" /></label>
+        <label>Password<input type="password" id="password" name="password" required minlength="8" /></label>
+        <label id="codeRow" class="hidden">Registration code<input type="text" id="code" name="code" placeholder="required after first account" /></label>
+        <p id="bootstrapNote" class="auth-note hidden">No accounts yet — this first registration creates the owner account.</p>
+        <button type="submit" id="submitBtn" class="btn-primary">Log in</button>
+      </form>
+
+      <p id="authError" class="auth-error"></p>
+      <p class="auth-foot">Paper trading by default. Not financial advice.</p>
+    </div>
+  </div>
+  <script src="/login.js"></script>
+</body>
+</html>

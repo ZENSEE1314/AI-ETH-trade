@@ -1,9 +1,13 @@
-// HTTP server: dashboard, JSON API, TradingView webhook, and an SSE stream.
+// HTTP server: auth, dashboard, JSON API, settings, TradingView webhook, SSE.
 
-import express, { type Request, type Response, type NextFunction } from 'express';
+import express, { type Request, type Response } from 'express';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { config, canTradeLive } from './config.js';
+import { config } from './config.js';
+import { canTradeLive, loadSettings, updateSettings, publicSettings } from './runtime.js';
+import { APP_SECRET_IS_EPHEMERAL } from './auth/crypto.js';
+import { register, authenticate, AuthError, userCount } from './auth/users.js';
+import { requireAuth, currentUser, setSessionCookie, clearSessionCookie } from './auth/middleware.js';
 import { logger } from './logger.js';
 import { engine } from './engine/tradeEngine.js';
 import { parseTradingViewAlert, WebhookError } from './webhooks/tradingview.js';
@@ -14,35 +18,68 @@ const publicDir = join(__dirname, '..', 'public');
 
 const app = express();
 app.use(express.json({ limit: '64kb' }));
-// TradingView sometimes posts text/plain; accept raw and JSON-parse ourselves.
 app.use(express.text({ type: ['text/plain', 'text/*'] }));
 
-// --- Optional dashboard/API auth ------------------------------------------
-function requireDashboardAuth(req: Request, res: Response, next: NextFunction): void {
-  if (!config.dashboardToken) return next();
-  const token = req.header('x-dashboard-token') ?? (req.query.token as string | undefined);
-  if (token === config.dashboardToken) return next();
-  res.status(401).json({ error: 'unauthorized' });
-}
+// --- Health ---------------------------------------------------------------
+app.get('/healthz', (_req, res) => res.json({ ok: true, live: canTradeLive() }));
 
-// --- Health & static ------------------------------------------------------
-app.get('/healthz', (_req, res) => res.json({ ok: true, mode: config.tradingMode, live: canTradeLive }));
+// --- Auth -----------------------------------------------------------------
+app.post('/auth/register', (req, res) => {
+  try {
+    const { username, password, code } = req.body ?? {};
+    const user = register(username, password, code);
+    setSessionCookie(res, user.id);
+    logger.info(`Registered user "${user.username}".`);
+    res.json({ ok: true, user });
+  } catch (err) {
+    const status = err instanceof AuthError ? 400 : 500;
+    res.status(status).json({ ok: false, error: (err as Error).message });
+  }
+});
 
-// --- JSON API -------------------------------------------------------------
-app.get('/api/state', requireDashboardAuth, (_req, res) => res.json(engine.state()));
-app.get('/api/journal', requireDashboardAuth, (_req, res) => res.json(engine.getJournal()));
-app.get('/api/logs', requireDashboardAuth, (_req, res) => res.json(logger.recent()));
-app.get('/api/curriculum', requireDashboardAuth, (_req, res) =>
+app.post('/auth/login', (req, res) => {
+  try {
+    const { username, password } = req.body ?? {};
+    const user = authenticate(username, password);
+    setSessionCookie(res, user.id);
+    res.json({ ok: true, user: { id: user.id, username: user.username } });
+  } catch (err) {
+    const status = err instanceof AuthError ? 401 : 500;
+    res.status(status).json({ ok: false, error: (err as Error).message });
+  }
+});
+
+app.post('/auth/logout', (_req, res) => {
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+app.get('/auth/me', (req, res) => {
+  const user = currentUser(req);
+  res.json({ user, needsBootstrap: userCount() === 0 });
+});
+
+// --- JSON API (session-protected) -----------------------------------------
+app.get('/api/state', requireAuth, (_req, res) => res.json(engine.state()));
+app.get('/api/journal', requireAuth, (_req, res) => res.json(engine.getJournal()));
+app.get('/api/logs', requireAuth, (_req, res) => res.json(logger.recent()));
+app.get('/api/curriculum', requireAuth, (_req, res) =>
   res.json({ philosophy: PHILOSOPHY, modules: CURRICULUM }),
 );
 
-app.post('/api/close/:id', requireDashboardAuth, (req, res) => {
+app.get('/api/settings', requireAuth, (_req, res) => res.json(publicSettings()));
+app.post('/api/settings', requireAuth, (req, res) => {
+  updateSettings(req.body ?? {});
+  res.json({ ok: true, settings: publicSettings() });
+});
+
+app.post('/api/close/:id', requireAuth, (req, res) => {
   const ok = engine.closePositionManually(req.params.id);
   res.status(ok ? 200 : 404).json({ ok });
 });
 
-// --- Server-Sent Events for live dashboard updates ------------------------
-app.get('/api/stream', requireDashboardAuth, (req, res) => {
+// --- SSE stream -----------------------------------------------------------
+app.get('/api/stream', requireAuth, (req, res) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -67,7 +104,7 @@ app.get('/api/stream', requireDashboardAuth, (req, res) => {
   });
 });
 
-// --- TradingView webhook --------------------------------------------------
+// --- TradingView webhook (its own shared secret, no session) --------------
 app.post('/webhook/tradingview', (req, res) => {
   try {
     const raw = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body;
@@ -82,13 +119,25 @@ app.post('/webhook/tradingview', (req, res) => {
   }
 });
 
-app.use(express.static(publicDir));
-app.get('/', (_req, res) => res.sendFile(join(publicDir, 'index.html')));
+// --- Static assets + gated dashboard --------------------------------------
+// Public assets (login page, css, js) are fine to serve to anyone; the API
+// behind them still requires a session.
+app.use(express.static(publicDir, { index: false }));
+
+const dashboard = (_req: Request, res: Response) => res.sendFile(join(publicDir, 'index.html'));
+app.get(['/', '/index.html'], (req, res) => {
+  if (!currentUser(req)) return res.redirect('/login.html');
+  return dashboard(req, res);
+});
 
 app.listen(config.port, () => {
-  logger.info(`AI-ETH-trade listening on :${config.port} (${config.tradingMode} mode)`);
-  if (!canTradeLive && config.tradingMode === 'live') {
-    logger.warn('TRADING_MODE=live but Bitunix credentials are missing — staying in paper mode.');
+  loadSettings();
+  logger.info(`AI-ETH-trade listening on :${config.port} (${engine.state().mode} mode)`);
+  if (APP_SECRET_IS_EPHEMERAL) {
+    logger.warn('APP_SECRET is not set — sessions and stored API secrets will NOT survive a restart. Set APP_SECRET.');
+  }
+  if (config.dataDir === 'data') {
+    logger.warn('DATA_DIR is the ephemeral default. On Railway, mount a volume and set RAILWAY_VOLUME_MOUNT_PATH to persist users/settings.');
   }
   engine.start();
 });
