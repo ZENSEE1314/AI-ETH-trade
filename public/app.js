@@ -1,0 +1,144 @@
+// Dashboard client: renders engine state and streams live updates via SSE.
+
+const $ = (id) => document.getElementById(id);
+const token = new URLSearchParams(location.search).get('token');
+const authHeaders = token ? { 'x-dashboard-token': token } : {};
+const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+
+const fmt = (n, dp = 2) =>
+  n === null || n === undefined || Number.isNaN(n) ? '—' : Number(n).toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp });
+const signed = (n) => (n > 0 ? '+' : '') + fmt(n);
+const pnlClass = (n) => (n > 0 ? 'pos-pnl' : n < 0 ? 'neg-pnl' : '');
+
+// --- Tabs -----------------------------------------------------------------
+document.querySelectorAll('.tab').forEach((tab) => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
+    document.querySelectorAll('.tabpane').forEach((p) => p.classList.remove('active'));
+    tab.classList.add('active');
+    $(`tab-${tab.dataset.tab}`).classList.add('active');
+  });
+});
+
+// --- Render state ---------------------------------------------------------
+function renderState(s) {
+  if (!s) return;
+  $('equity').textContent = '$' + fmt(s.equity);
+  const net = s.stats.netPnlUsdt;
+  $('netPnl').textContent = signed(net);
+  $('netPnl').className = 'value ' + pnlClass(net);
+  $('dayPnl').textContent = signed(s.stats.dayPnlUsdt);
+  $('dayPnl').className = 'value ' + pnlClass(s.stats.dayPnlUsdt);
+  $('bias').textContent = (s.bias || 'neutral').toUpperCase();
+  $('price').textContent = s.lastPrice ? '$' + fmt(s.lastPrice) : '—';
+  $('winRate').textContent = fmt(s.stats.winRatePct, 1) + '%';
+  $('expectancy').textContent = fmt(s.stats.expectancyR, 2) + 'R';
+  $('profitFactor').textContent = s.stats.profitFactor === null || s.stats.profitFactor === Infinity ? '∞' : fmt(s.stats.profitFactor, 2);
+
+  const modeBadge = $('modeBadge');
+  modeBadge.textContent = s.mode; modeBadge.className = 'badge ' + (s.mode === 'paper' ? 'paper' : 'live-on');
+  const liveBadge = $('liveBadge');
+  liveBadge.textContent = s.liveEnabled ? 'LIVE ON' : 'live off';
+  liveBadge.className = 'badge ' + (s.liveEnabled ? 'live-on' : '');
+
+  const kb = $('killBanner');
+  if (s.killSwitch.daily || s.killSwitch.weekly) {
+    kb.classList.remove('hidden');
+    kb.textContent = '🛑 KILL SWITCH ACTIVE — ' + s.killSwitch.reason + '. No new trades will be opened.';
+  } else kb.classList.add('hidden');
+
+  renderPositions(s.openPositions);
+  renderSignals(s.recentSignals);
+}
+
+function renderPositions(positions) {
+  const el = $('positions');
+  if (!positions || positions.length === 0) { el.innerHTML = '<p class="muted">No open positions.</p>'; return; }
+  el.innerHTML = positions.map((p) => `
+    <div class="pos">
+      <div class="pos-head">
+        <span class="dir ${p.side}">${p.side.toUpperCase()}</span>
+        <button class="btn-close" data-id="${p.id}">Close</button>
+      </div>
+      <div class="kv">
+        <div><span>Entry</span> <b>${fmt(p.entry)}</b></div>
+        <div><span>Size</span> <b>${fmt(p.sizeContracts, 4)} ETH</b></div>
+        <div><span>Stop</span> <b>${fmt(p.stopLoss)}</b></div>
+        <div><span>Target</span> <b>${fmt(p.takeProfit)}</b></div>
+        <div><span>Liq.</span> <b>${fmt(p.liquidationPrice)}</b></div>
+        <div><span>Lev</span> <b>${p.leverage}x · ${p.mode}</b></div>
+      </div>
+    </div>`).join('');
+  el.querySelectorAll('.btn-close').forEach((b) =>
+    b.addEventListener('click', () => fetch(`/api/close/${b.dataset.id}${qs}`, { method: 'POST', headers: authHeaders })));
+}
+
+function renderSignals(signals) {
+  const el = $('signals');
+  if (!signals || signals.length === 0) { el.innerHTML = '<p class="muted">Waiting for setups…</p>'; return; }
+  el.innerHTML = signals.map((sig) => `
+    <div class="sig">
+      <div class="sig-head">
+        <span class="dir ${sig.side}">${sig.side.toUpperCase()} · ${sig.source}</span>
+        <b>${fmt(sig.confluence, 0)}%</b>
+      </div>
+      <div class="kv">
+        <div><span>Entry</span> <b>${fmt(sig.entry)}</b></div>
+        <div><span>R:R</span> <b>${fmt(sig.riskReward, 2)}</b></div>
+        <div><span>Stop</span> <b>${fmt(sig.stopLoss)}</b></div>
+        <div><span>Target</span> <b>${fmt(sig.takeProfit)}</b></div>
+      </div>
+      <div class="conf-bar"><div class="conf-fill" style="width:${Math.min(100, sig.confluence)}%"></div></div>
+      <div class="reasons">${(sig.reasons || []).map((r) => `<div>› ${r}</div>`).join('')}</div>
+    </div>`).join('');
+}
+
+async function loadJournal() {
+  const rows = await fetch(`/api/journal${qs}`, { headers: authHeaders }).then((r) => r.json());
+  const tb = document.querySelector('#journalTable tbody');
+  if (!rows.length) { tb.innerHTML = '<tr><td colspan="8" class="muted">No trades yet.</td></tr>'; return; }
+  tb.innerHTML = rows.map((t) => `
+    <tr>
+      <td>${new Date(t.closedAt).toLocaleString()}</td>
+      <td class="dir ${t.side}">${t.side}</td>
+      <td>${fmt(t.entry)}</td><td>${fmt(t.exit)}</td>
+      <td>${fmt(t.rMultiple, 2)}</td>
+      <td class="${pnlClass(t.pnlUsdt)}">${signed(t.pnlUsdt)}</td>
+      <td>${t.reason}</td><td>${t.mode}</td>
+    </tr>`).join('');
+}
+
+async function loadCurriculum() {
+  const data = await fetch(`/api/curriculum${qs}`, { headers: authHeaders }).then((r) => r.json());
+  $('philosophy').textContent = data.philosophy;
+  $('curriculum').innerHTML = data.modules.map((m) => `
+    <div class="module">
+      <h3>${m.title}</h3>
+      ${m.lessons.map((l) => `
+        <div class="lesson">
+          <div class="topic">${l.topic}</div>
+          <div class="sum">${l.summary}</div>
+          <div class="applied">↳ ${l.appliedIn}</div>
+        </div>`).join('')}
+    </div>`).join('');
+}
+
+async function loadLogs() {
+  const logs = await fetch(`/api/logs${qs}`, { headers: authHeaders }).then((r) => r.json());
+  $('logs').innerHTML = logs.map((l) =>
+    `<div class="logline ${l.level}"><span class="t">${new Date(l.time).toLocaleTimeString()}</span> ${l.msg}</div>`).join('');
+}
+
+// --- Live stream ----------------------------------------------------------
+function connect() {
+  const es = new EventSource(`/api/stream${qs}`);
+  es.addEventListener('open', () => { $('connBadge').textContent = 'live'; $('connBadge').className = 'badge ok'; });
+  es.addEventListener('update', (e) => { renderState(JSON.parse(e.data)); loadJournal(); loadLogs(); });
+  es.addEventListener('trade', () => loadJournal());
+  es.onerror = () => { $('connBadge').textContent = 'reconnecting…'; $('connBadge').className = 'badge off'; };
+}
+
+// --- Init -----------------------------------------------------------------
+fetch(`/api/state${qs}`, { headers: authHeaders }).then((r) => r.json()).then(renderState).catch(() => {});
+loadJournal(); loadCurriculum(); loadLogs(); connect();
+setInterval(loadLogs, 15000);

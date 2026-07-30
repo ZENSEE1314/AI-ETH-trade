@@ -1,0 +1,192 @@
+// The trade engine: orchestrates strategy -> risk -> execution -> journal, and
+// exposes state for the dashboard. Holds all in-memory runtime state.
+
+import { EventEmitter } from 'node:events';
+import type { Candle, Position, Signal, Trade } from '../types.js';
+import { config, canTradeLive } from '../config.js';
+import { logger } from '../logger.js';
+import { generateSignal, type MarketSnapshot } from '../strategy/signal.js';
+import { buildBias } from '../strategy/bias.js';
+import { assessRisk, type RiskContext } from '../risk/riskManager.js';
+import { openPaperPosition, evaluatePosition, closePosition } from '../exchange/paperBroker.js';
+import { placeLiveOrder } from '../exchange/bitunix.js';
+import { loadSnapshot, lastPrice } from './marketData.js';
+import { Journal } from './journal.js';
+
+export interface EngineState {
+  running: boolean;
+  mode: string;
+  liveEnabled: boolean;
+  symbol: string;
+  startEquity: number;
+  equity: number;
+  lastPrice: number;
+  killSwitch: { daily: boolean; weekly: boolean; reason: string };
+  bias: string;
+  openPositions: Position[];
+  recentSignals: Signal[];
+  stats: ReturnType<Journal['stats']>;
+  updatedAt: number;
+}
+
+export class TradeEngine extends EventEmitter {
+  private journal = new Journal();
+  private openPositions: Position[] = [];
+  private recentSignals: Signal[] = [];
+  private startEquity = config.accountEquityUsdt;
+  private lastPx = 0;
+  private lastBias = 'n/a';
+  private running = false;
+  private timer: NodeJS.Timeout | null = null;
+
+  get equity(): number {
+    return this.startEquity + this.journal.stats().netPnlUsdt;
+  }
+
+  start(): void {
+    if (this.running || config.analysisIntervalMs <= 0) return;
+    this.running = true;
+    logger.info(`Engine started in ${config.tradingMode.toUpperCase()} mode (live ${canTradeLive ? 'ENABLED' : 'disabled'}).`);
+    void this.cycle();
+    this.timer = setInterval(() => void this.cycle(), config.analysisIntervalMs);
+  }
+
+  stop(): void {
+    this.running = false;
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+    logger.info('Engine stopped.');
+  }
+
+  private riskContext(): RiskContext {
+    return {
+      equityUsdt: this.equity,
+      dayPnlUsdt: this.journal.dayPnl(),
+      weekPnlUsdt: this.journal.weekPnl(),
+      openPositions: this.openPositions.length,
+    };
+  }
+
+  /** One analysis + management cycle. */
+  async cycle(): Promise<void> {
+    try {
+      const snap = await loadSnapshot(config.symbol);
+      this.lastPx = lastPrice(snap);
+      this.lastBias = buildBias(snap.h4.length ? snap.h4 : snap.h1).direction;
+
+      this.manageOpenPositions(snap);
+
+      const signal = generateSignal(snap);
+      if (signal) this.processSignal(signal);
+
+      this.emit('update', this.state());
+    } catch (err) {
+      logger.error(`Cycle error: ${(err as Error).message}`);
+    }
+  }
+
+  /** Close open positions whose stop/target/liquidation was hit on the last candle. */
+  private manageOpenPositions(snap: MarketSnapshot): void {
+    const candle: Candle | undefined = (snap.m1.length ? snap.m1 : snap.m15).at(-1);
+    if (!candle) return;
+    const still: Position[] = [];
+    for (const pos of this.openPositions) {
+      const trade = evaluatePosition(pos, candle);
+      if (trade) {
+        this.journal.record(trade);
+        logger.trade(`Closed ${trade.side} ${trade.symbol} via ${trade.reason}: ${trade.pnlUsdt} USDT (${trade.rMultiple}R)`);
+        this.emit('trade', trade);
+      } else {
+        still.push(pos);
+      }
+    }
+    this.openPositions = still;
+  }
+
+  /** Run a signal through risk and, if approved, execute it. */
+  processSignal(signal: Signal): void {
+    this.recentSignals.unshift(signal);
+    this.recentSignals = this.recentSignals.slice(0, 20);
+    this.emit('signal', signal);
+
+    const decision = assessRisk(signal, this.riskContext());
+    logger.info(`Signal ${signal.side} conf=${signal.confluence} rr=${signal.riskReward} -> ${decision.reason}`);
+    if (!decision.approved) {
+      this.emit('rejected', { signal, decision });
+      return;
+    }
+
+    const position = openPaperPosition(signal, decision);
+
+    if (canTradeLive) {
+      placeLiveOrder({
+        symbol: signal.symbol,
+        side: signal.side,
+        qty: decision.positionSizeContracts,
+        entry: signal.entry,
+        stopLoss: signal.stopLoss,
+        takeProfit: signal.takeProfit,
+      })
+        .then(() => {
+          position.mode = 'live';
+        })
+        .catch((err) => logger.error(`Live order failed: ${(err as Error).message}`));
+    }
+
+    this.openPositions.push(position);
+    logger.trade(`Opened ${position.side} ${position.symbol} @ ${position.entry} (${position.mode}) size=${position.sizeContracts}`);
+    this.emit('opened', position);
+  }
+
+  /** Manually flatten a position at the current price (dashboard control). */
+  closePositionManually(id: string): boolean {
+    const idx = this.openPositions.findIndex((p) => p.id === id);
+    if (idx === -1) return false;
+    const pos = this.openPositions[idx];
+    const trade = closePosition(pos, this.lastPx || pos.entry, 'manual');
+    this.journal.record(trade);
+    this.openPositions.splice(idx, 1);
+    logger.trade(`Manually closed ${pos.side} ${pos.symbol}: ${trade.pnlUsdt} USDT`);
+    this.emit('trade', trade);
+    return true;
+  }
+
+  state(): EngineState {
+    const ctx = this.riskContext();
+    const dailyLimit = ctx.equityUsdt * (config.maxDailyLossPct / 100);
+    const weeklyLimit = ctx.equityUsdt * (config.maxWeeklyLossPct / 100);
+    const dailyHit = -ctx.dayPnlUsdt >= dailyLimit;
+    const weeklyHit = -ctx.weekPnlUsdt >= weeklyLimit;
+
+    return {
+      running: this.running,
+      mode: config.tradingMode,
+      liveEnabled: canTradeLive,
+      symbol: config.symbol,
+      startEquity: this.startEquity,
+      equity: round(this.equity, 2),
+      lastPrice: this.lastPx,
+      killSwitch: {
+        daily: dailyHit,
+        weekly: weeklyHit,
+        reason: dailyHit ? 'Daily loss cap reached' : weeklyHit ? 'Weekly loss cap reached' : 'clear',
+      },
+      bias: this.lastBias,
+      openPositions: this.openPositions,
+      recentSignals: this.recentSignals,
+      stats: this.journal.stats(),
+      updatedAt: Date.now(),
+    };
+  }
+
+  getJournal(): Trade[] {
+    return this.journal.all();
+  }
+}
+
+function round(n: number, dp: number): number {
+  const f = 10 ** dp;
+  return Math.round(n * f) / f;
+}
+
+export const engine = new TradeEngine();

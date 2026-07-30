@@ -1,0 +1,26 @@
+{
+  "name": "ai-eth-trade",
+  "version": "1.0.0",
+  "description": "AI-assisted ETH futures trading bot using Smart Money Concepts (Liquidity, Market Structure, Timing). Paper-trading by default; live execution on Bitunix is strictly opt-in.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "dev": "tsx watch src/server.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

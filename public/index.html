@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI-ETH-trade · Sniper Desk</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">📈</span>
+      <div>
+        <h1>AI-ETH-trade</h1>
+        <p class="philosophy" id="philosophy">Bias &gt; Context &gt; Liquidity &gt; Market Structure &gt; Timing &gt; Execution &gt; Risk</p>
+      </div>
+    </div>
+    <div class="badges">
+      <span class="badge" id="modeBadge">paper</span>
+      <span class="badge" id="liveBadge">live off</span>
+      <span class="badge" id="connBadge">connecting…</span>
+    </div>
+  </header>
+
+  <div id="killBanner" class="kill-banner hidden"></div>
+
+  <main>
+    <section class="cards" aria-label="Account overview">
+      <div class="card"><span class="label">Equity</span><span class="value" id="equity">—</span></div>
+      <div class="card"><span class="label">Net PnL</span><span class="value" id="netPnl">—</span></div>
+      <div class="card"><span class="label">Day PnL</span><span class="value" id="dayPnl">—</span></div>
+      <div class="card"><span class="label">Bias</span><span class="value" id="bias">—</span></div>
+      <div class="card"><span class="label">ETH Price</span><span class="value" id="price">—</span></div>
+      <div class="card"><span class="label">Win Rate</span><span class="value" id="winRate">—</span></div>
+      <div class="card"><span class="label">Expectancy</span><span class="value" id="expectancy">—</span></div>
+      <div class="card"><span class="label">Profit Factor</span><span class="value" id="profitFactor">—</span></div>
+    </section>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="live">Live</button>
+      <button class="tab" data-tab="journal">Journal</button>
+      <button class="tab" data-tab="curriculum">Playbook</button>
+      <button class="tab" data-tab="logs">Logs</button>
+    </nav>
+
+    <section class="tabpane active" id="tab-live">
+      <div class="grid2">
+        <div class="panel">
+          <h2>Open Positions</h2>
+          <div id="positions" class="list"><p class="muted">No open positions.</p></div>
+        </div>
+        <div class="panel">
+          <h2>Recent Signals</h2>
+          <div id="signals" class="list"><p class="muted">Waiting for setups…</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tabpane" id="tab-journal">
+      <div class="panel">
+        <h2>Trade Journal</h2>
+        <div class="table-wrap">
+          <table id="journalTable">
+            <thead><tr><th>Closed</th><th>Side</th><th>Entry</th><th>Exit</th><th>R</th><th>PnL</th><th>Exit</th><th>Mode</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="tabpane" id="tab-curriculum">
+      <div class="panel"><h2>Strategy Playbook</h2><div id="curriculum" class="curriculum"></div></div>
+    </section>
+
+    <section class="tabpane" id="tab-logs">
+      <div class="panel"><h2>Engine Logs</h2><div id="logs" class="logs"></div></div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Paper trading by default. Live execution requires your own Bitunix API keys and <code>TRADING_MODE=live</code>. Not financial advice.</p>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
