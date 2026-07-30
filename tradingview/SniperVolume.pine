@@ -22,8 +22,8 @@ float spread = high - low
 float avgSpread = ta.sma(spread, volLen)
 bool  narrowSpread = not na(avgSpread) and spread < avgSpread
 
-bool climax = relVol >= climaxX
-bool high   = relVol >= highVolX
+bool climax  = relVol >= climaxX
+bool highVol = relVol >= highVolX
 
 // VSA classes:
 //  climax  = exhaustion / stopping volume     -> yellow
@@ -31,8 +31,8 @@ bool high   = relVol >= highVolX
 //  supply  = high-volume down bar             -> red
 //  normal up / down                            -> muted teal / maroon
 color volCol = climax ? color.yellow :
-     high and up ? color.new(color.lime, 0) :
-     high and not up ? color.new(color.red, 0) :
+     highVol and up ? color.new(color.lime, 0) :
+     highVol and not up ? color.new(color.red, 0) :
      up ? color.new(color.teal, 55) : color.new(color.maroon, 55)
 
 plot(volume, "Volume", style = plot.style_columns, color = volCol)
@@ -52,9 +52,9 @@ plotchar(absorption, "Absorption", "▣", location = location.bottom, color = co
 var table t = table.new(position.top_right, 2, 4, border_width = 1)
 if barstate.islast
     t.cell(0, 0, "Rel Vol", text_color = color.gray, text_size = size.small)
-    t.cell(1, 0, str.tostring(relVol, "#.0") + "×", text_color = climax ? color.yellow : high ? color.lime : color.gray, text_size = size.small)
+    t.cell(1, 0, str.tostring(relVol, "#.0") + "×", text_color = climax ? color.yellow : highVol ? color.lime : color.gray, text_size = size.small)
     t.cell(0, 1, "Class", text_color = color.gray, text_size = size.small)
-    string cls = climax ? "Climax" : high and up ? "Demand" : high and not up ? "Supply" : up ? "Up" : "Down"
+    string cls = climax ? "Climax" : highVol and up ? "Demand" : highVol and not up ? "Supply" : up ? "Up" : "Down"
     t.cell(1, 1, cls, text_size = size.small)
     t.cell(0, 2, "Spread", text_color = color.gray, text_size = size.small)
     t.cell(1, 2, narrowSpread ? "Narrow" : "Wide", text_size = size.small)
