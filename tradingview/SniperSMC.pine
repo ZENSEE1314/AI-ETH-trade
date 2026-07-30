@@ -14,6 +14,7 @@ indicator("Sniper SMC + VWAP + VSA", overlay = true, max_boxes_count = 500, max_
 // ------------------------------------------------------------------- Inputs --
 grpMS   = "Market Structure"
 swingLen = input.int(8, "Swing Pivot Length", minval = 2, group = grpMS)
+showSwings = input.bool(true, "Show HH / HL / LH / LL", group = grpMS)
 showMS   = input.bool(true, "Show BOS / CHoCH", group = grpMS)
 
 grpLiq  = "Liquidity (EQH / EQL & Sweeps)"
@@ -36,12 +37,14 @@ volLen    = input.int(20, "Volume average length", minval = 2, group = grpVol)
 highVolX  = input.float(1.5, "High-volume threshold (× avg)", step = 0.1, group = grpVol)
 climaxX   = input.float(2.5, "Climax-volume threshold (× avg)", step = 0.1, group = grpVol)
 colorVol  = input.bool(true, "Colour volume-significant bars", group = grpVol)
+showVSA   = input.bool(true, "Show VSA markers", group = grpVol)
 
 grpSig  = "Signals & Risk"
 scoreThreshold = input.int(60, "Min confluence to signal (0-100)", minval = 0, maxval = 100, group = grpSig)
 minRR    = input.float(2.0, "Min Risk:Reward", minval = 0.5, step = 0.1, group = grpSig)
 stopBufX = input.float(0.20, "Stop buffer (× ATR)", step = 0.05, group = grpSig)
 cooldown = input.int(5, "Min bars between signals", minval = 0, group = grpSig)
+showSignals = input.bool(false, "Show LONG / SHORT signals (and fire bot alerts)", group = grpSig)
 
 grpHook = "Webhook (AI-ETH-trade bot)"
 whSecret = input.string("", "Webhook secret", group = grpHook)
@@ -72,6 +75,9 @@ bool eql = false
 if not na(ph)
     if not na(prevPH) and atrOk and math.abs(ph - prevPH) <= eqTolMult * atr
         eqh := true
+    if showSwings and not na(prevPH)
+        bool hh = ph > prevPH
+        label.new(bar_index - swingLen, ph, hh ? "HH" : "LH", style = label.style_label_down, color = color.new(color.gray, 75), textcolor = hh ? color.teal : color.red, size = size.tiny)
     prevPH := ph
     lastSwingHigh := ph
     resistance := ph
@@ -80,6 +86,9 @@ if not na(ph)
 if not na(pl)
     if not na(prevPL) and atrOk and math.abs(pl - prevPL) <= eqTolMult * atr
         eql := true
+    if showSwings and not na(prevPL)
+        bool hl = pl > prevPL
+        label.new(bar_index - swingLen, pl, hl ? "HL" : "LL", style = label.style_label_up, color = color.new(color.gray, 75), textcolor = hl ? color.teal : color.red, size = size.tiny)
     prevPL := pl
     lastSwingLow := pl
     support := pl
@@ -213,8 +222,18 @@ bool downBar = close < open
 bool vsaDemand = highVol and upBar
 bool vsaSupply = highVol and downBar
 bool absorption = climaxVol and narrowSpread
+bool noDemand = upBar and relVol < 0.7 and narrowSpread     // weak up bar = no buyers
+bool noSupply = downBar and relVol < 0.7 and narrowSpread   // weak down bar = no sellers
 
 barcolor(colorVol and climaxVol ? color.new(color.fuchsia, 0) : colorVol and highVol ? color.new(color.aqua, 30) : na)
+
+// Visible VSA markers
+plotshape(showVSA and vsaDemand and not climaxVol, "VSA Demand", style = shape.triangleup, location = location.belowbar, color = color.new(color.lime, 0), size = size.tiny, text = "D")
+plotshape(showVSA and vsaSupply and not climaxVol, "VSA Supply", style = shape.triangledown, location = location.abovebar, color = color.new(color.orange, 0), size = size.tiny, text = "S")
+plotchar(showVSA and climaxVol, "VSA Climax", "◆", location = location.abovebar, color = color.fuchsia, size = size.tiny, text = "CLX")
+plotchar(showVSA and absorption, "VSA Absorption", "▣", location = location.belowbar, color = color.yellow, size = size.tiny)
+plotchar(showVSA and noDemand, "No Demand", "▽", location = location.abovebar, color = color.new(color.gray, 20), size = size.tiny, text = "ND")
+plotchar(showVSA and noSupply, "No Supply", "△", location = location.belowbar, color = color.new(color.gray, 20), size = size.tiny, text = "NS")
 
 // --------------------------------------------------- Premium / Discount ------
 bool haveRange = not na(lastSwingHigh) and not na(lastSwingLow) and lastSwingHigh > lastSwingLow
@@ -273,16 +292,16 @@ if longSignal and shortSignal
 if longSignal or shortSignal
     lastSigBar := bar_index
 
-plotshape(longSignal, "Long", style = shape.triangleup, location = location.belowbar, color = color.new(color.green, 0), size = size.small, text = "LONG")
-plotshape(shortSignal, "Short", style = shape.triangledown, location = location.abovebar, color = color.new(color.red, 0), size = size.small, text = "SHORT")
+plotshape(showSignals and longSignal, "Long", style = shape.triangleup, location = location.belowbar, color = color.new(color.green, 0), size = size.normal, text = "LONG")
+plotshape(showSignals and shortSignal, "Short", style = shape.triangledown, location = location.abovebar, color = color.new(color.red, 0), size = size.normal, text = "SHORT")
 
 // ---------------------------------------------------------- Webhook JSON -----
 f_json(_side, _entry, _sl, _tp, _conf) =>
     '{"secret":"' + whSecret + '","symbol":"' + whSymbol + '","side":"' + _side + '","entry":' + str.tostring(_entry, "#.########") + ',"stopLoss":' + str.tostring(_sl, "#.########") + ',"takeProfit":' + str.tostring(_tp, "#.########") + ',"confluence":' + str.tostring(_conf) + '}'
 
-if longSignal
+if showSignals and longSignal
     alert(f_json("long", close, slLong, tgtLong, scoreLong), alert.freq_once_per_bar_close)
-if shortSignal
+if showSignals and shortSignal
     alert(f_json("short", close, slShort, tgtShort, scoreShort), alert.freq_once_per_bar_close)
 
 // alertcondition variants (for manual alert wiring / visibility)
@@ -290,7 +309,7 @@ alertcondition(longSignal, "Sniper Long", "Sniper SMC long signal")
 alertcondition(shortSignal, "Sniper Short", "Sniper SMC short signal")
 
 // ------------------------------------------------------------- Dashboard -----
-var table tbl = table.new(position.top_right, 2, 6, border_width = 1)
+var table tbl = table.new(position.top_right, 2, 7, border_width = 1)
 if barstate.islast
     table.cell(tbl, 0, 0, "Trend", text_color = color.gray, text_size = size.small)
     table.cell(tbl, 1, 0, trend == 1 ? "Bullish" : trend == -1 ? "Bearish" : "Range", text_color = trend == 1 ? color.green : trend == -1 ? color.red : color.gray, text_size = size.small)
@@ -304,3 +323,6 @@ if barstate.islast
     table.cell(tbl, 1, 4, str.tostring(scoreLong), text_color = scoreLong >= scoreThreshold ? color.green : color.gray, text_size = size.small)
     table.cell(tbl, 0, 5, "Short conf", text_color = color.gray, text_size = size.small)
     table.cell(tbl, 1, 5, str.tostring(scoreShort), text_color = scoreShort >= scoreThreshold ? color.red : color.gray, text_size = size.small)
+    string vsaTxt = climaxVol ? "Climax" : vsaDemand ? "Demand" : vsaSupply ? "Supply" : noDemand ? "No Demand" : noSupply ? "No Supply" : "-"
+    table.cell(tbl, 0, 6, "VSA", text_color = color.gray, text_size = size.small)
+    table.cell(tbl, 1, 6, vsaTxt, text_color = climaxVol ? color.fuchsia : vsaDemand ? color.lime : vsaSupply ? color.orange : color.gray, text_size = size.small)
