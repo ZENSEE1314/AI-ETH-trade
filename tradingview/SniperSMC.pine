@@ -55,6 +55,10 @@ whSymbol = input.string("ETHUSDT", "Bot symbol", group = grpHook)
 atr = ta.atr(200)
 atrOk = not na(atr) and atr > 0
 
+// Structure palette matched to the Expo SMC look (gold BMS, grey CHoCH, white swings)
+color colBMS   = color.rgb(212, 188, 0)
+color colCHoCH = color.rgb(128, 128, 128)
+
 // ------------------------------------------------------ Market structure -----
 ph = ta.pivothigh(high, swingLen, swingLen)
 pl = ta.pivotlow(low, swingLen, swingLen)
@@ -169,11 +173,11 @@ if not na(support) and not supBroken and close < support
 
 if showMS
     if (bosUp or chochUp) and not na(resBar)
-        line.new(resBar, resistance, bar_index, resistance, color = color.new(chochUp ? color.orange : color.teal, 0), style = line.style_dashed, width = 1)
-        label.new(bar_index, resistance, chochUp ? "CHoCH" : "BMS", style = label.style_none, textcolor = chochUp ? color.orange : color.teal, size = size.small)
+        line.new(resBar, resistance, bar_index, resistance, color = chochUp ? colCHoCH : colBMS, style = line.style_solid, width = 1)
+        label.new(bar_index, resistance, chochUp ? "CHoCH" : "BMS", style = label.style_none, textcolor = chochUp ? colCHoCH : colBMS, size = size.small)
     if (bosDn or chochDn) and not na(supBar)
-        line.new(supBar, support, bar_index, support, color = color.new(chochDn ? color.orange : color.maroon, 0), style = line.style_dashed, width = 1)
-        label.new(bar_index, support, chochDn ? "CHoCH" : "BMS", style = label.style_none, textcolor = chochDn ? color.orange : color.teal, size = size.small)
+        line.new(supBar, support, bar_index, support, color = chochDn ? colCHoCH : colBMS, style = line.style_solid, width = 1)
+        label.new(bar_index, support, chochDn ? "CHoCH" : "BMS", style = label.style_none, textcolor = chochDn ? colCHoCH : colBMS, size = size.small)
 
 // (EQH / EQL are drawn inline above, when a confirmed swing equals the prior one.)
 
