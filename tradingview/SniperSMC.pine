@@ -15,8 +15,7 @@ indicator("Sniper SMC + VWAP + VSA", overlay = true, max_boxes_count = 500, max_
 grpMS   = "Market Structure"
 swingLen = input.int(10, "Swing Pivot Length", minval = 2, group = grpMS)
 showSwings = input.bool(true, "Show HH / HL / LH / LL", group = grpMS)
-showStructLine = input.bool(false, "Connect swings with structure line", group = grpMS)
-showMS   = input.bool(true, "Show BOS / CHoCH", group = grpMS)
+showMS   = input.bool(true, "Show BMS / CHoCH", group = grpMS)
 
 grpLiq  = "Liquidity (EQH / EQL & Sweeps)"
 eqTolMult = input.float(0.10, "Equal H/L tolerance (× ATR)", minval = 0.0, step = 0.05, group = grpLiq)
@@ -66,51 +65,85 @@ var bool  resBroken  = true
 var float support    = na
 var bool  supBroken  = true
 var int   trend      = 0   // 1 bullish, -1 bearish, 0 undecided
-var int   resBar     = na  // bar where current resistance swing formed
-var int   supBar     = na  // bar where current support swing formed
-var int   zBar       = na  // previous swing point for the connecting structure line
-var float zPrice     = na
+var int   resBar     = na
+var int   supBar     = na
 
-// Equal-highs / equal-lows tracking
-var float prevPH = na
-var float prevPL = na
-bool eqh = false
-bool eql = false
+// --- Alternating zig-zag structure -------------------------------------------
+// A swing high is confirmed only when price turns down into a low (and a low
+// only when price turns up), so swings strictly alternate H-L-H-L. Each leg
+// keeps only its extreme, and every confirmed swing is compared to the last
+// confirmed swing of the SAME type -> correct HH / HL / LH / LL.
+var int   legDir      = 0    // 1 = up leg (tracking a high), -1 = down leg
+var float legExt      = na   // running extreme of the current leg
+var int   legExtBar   = na
+var float lastHigh    = na   // last confirmed swing high
+var int   lastHighBar = na
+var float lastLow     = na   // last confirmed swing low
+var int   lastLowBar  = na
+
+bool  newHigh = false
+bool  newLow  = false
+float confHighP = na
+int   confHighB = na
+float confLowP  = na
+int   confLowB  = na
 
 if not na(ph)
-    int sbar = bar_index - swingLen
-    if not na(prevPH) and atrOk and math.abs(ph - prevPH) <= eqTolMult * atr
-        eqh := true
-    if showStructLine and not na(zBar)
-        line.new(zBar, zPrice, sbar, ph, color = color.new(color.gray, 45), width = 1)
-    if showSwings
-        label.new(sbar, ph, "", style = label.style_circle, color = color.new(color.red, 0), size = size.tiny)
-        if not na(prevPH)
-            label.new(sbar, ph, ph > prevPH ? "HH" : "LH", style = label.style_label_down, color = color.new(color.black, 100), textcolor = color.white, size = size.small)
-    zBar := sbar
-    zPrice := ph
-    prevPH := ph
-    lastSwingHigh := ph
-    resistance := ph
-    resBar := sbar
-    resBroken := false
+    if legDir == 1
+        if na(legExt) or ph > legExt
+            legExt := ph
+            legExtBar := bar_index - swingLen
+    else
+        if legDir == -1 and not na(legExt)
+            confLowP := legExt
+            confLowB := legExtBar
+            newLow := true
+        legDir := 1
+        legExt := ph
+        legExtBar := bar_index - swingLen
 
 if not na(pl)
-    int sbar = bar_index - swingLen
-    if not na(prevPL) and atrOk and math.abs(pl - prevPL) <= eqTolMult * atr
-        eql := true
-    if showStructLine and not na(zBar)
-        line.new(zBar, zPrice, sbar, pl, color = color.new(color.gray, 45), width = 1)
+    if legDir == -1
+        if na(legExt) or pl < legExt
+            legExt := pl
+            legExtBar := bar_index - swingLen
+    else
+        if legDir == 1 and not na(legExt)
+            confHighP := legExt
+            confHighB := legExtBar
+            newHigh := true
+        legDir := -1
+        legExt := pl
+        legExtBar := bar_index - swingLen
+
+if newHigh
+    bool isHH = not na(lastHigh) and confHighP > lastHigh
+    if showEq and atrOk and not na(lastHigh) and math.abs(confHighP - lastHigh) <= eqTolMult * atr
+        line.new(lastHighBar, lastHigh, confHighB, confHighP, color = color.new(color.orange, 0), style = line.style_dotted, width = 1)
+        label.new(confHighB, confHighP, "EQH", style = label.style_none, textcolor = color.orange, size = size.tiny)
     if showSwings
-        label.new(sbar, pl, "", style = label.style_circle, color = color.new(color.green, 0), size = size.tiny)
-        if not na(prevPL)
-            label.new(sbar, pl, pl > prevPL ? "HL" : "LL", style = label.style_label_up, color = color.new(color.black, 100), textcolor = color.white, size = size.small)
-    zBar := sbar
-    zPrice := pl
-    prevPL := pl
-    lastSwingLow := pl
-    support := pl
-    supBar := sbar
+        label.new(confHighB, confHighP, "", style = label.style_circle, color = color.new(color.red, 0), size = size.tiny)
+        label.new(confHighB, confHighP, isHH ? "HH" : "LH", style = label.style_label_down, color = color.new(color.black, 100), textcolor = color.white, size = size.small)
+    lastHigh := confHighP
+    lastHighBar := confHighB
+    lastSwingHigh := confHighP
+    resistance := confHighP
+    resBar := confHighB
+    resBroken := false
+
+if newLow
+    bool isHL = not na(lastLow) and confLowP > lastLow
+    if showEq and atrOk and not na(lastLow) and math.abs(confLowP - lastLow) <= eqTolMult * atr
+        line.new(lastLowBar, lastLow, confLowB, confLowP, color = color.new(color.blue, 0), style = line.style_dotted, width = 1)
+        label.new(confLowB, confLowP, "EQL", style = label.style_none, textcolor = color.blue, size = size.tiny)
+    if showSwings
+        label.new(confLowB, confLowP, "", style = label.style_circle, color = color.new(color.green, 0), size = size.tiny)
+        label.new(confLowB, confLowP, isHL ? "HL" : "LL", style = label.style_label_up, color = color.new(color.black, 100), textcolor = color.white, size = size.small)
+    lastLow := confLowP
+    lastLowBar := confLowB
+    lastSwingLow := confLowP
+    support := confLowP
+    supBar := confLowB
     supBroken := false
 
 // Breaks -> BOS (with trend) or CHoCH (against trend)
@@ -141,13 +174,7 @@ if showMS
         line.new(supBar, support, bar_index, support, color = color.new(chochDn ? color.orange : color.maroon, 0), style = line.style_dashed, width = 1)
         label.new(bar_index, support, chochDn ? "CHoCH" : "BMS", style = label.style_none, textcolor = chochDn ? color.orange : color.teal, size = size.small)
 
-// --------------------------------------------------------- EQH / EQL draw ----
-if showEq and eqh and not na(prevPH)
-    line.new(bar_index - swingLen, ph, bar_index, ph, color = color.new(color.orange, 0), style = line.style_dotted, width = 1)
-    label.new(bar_index, ph, "EQH", style = label.style_label_down, color = color.new(color.orange, 60), textcolor = color.orange, size = size.tiny)
-if showEq and eql and not na(prevPL)
-    line.new(bar_index - swingLen, pl, bar_index, pl, color = color.new(color.blue, 0), style = line.style_dotted, width = 1)
-    label.new(bar_index, pl, "EQL", style = label.style_label_up, color = color.new(color.blue, 60), textcolor = color.blue, size = size.tiny)
+// (EQH / EQL are drawn inline above, when a confirmed swing equals the prior one.)
 
 // ---------------------------------------------------- Liquidity sweeps -------
 // Buy-side sweep: wick takes prior swing high but closes back below (traps longs)
