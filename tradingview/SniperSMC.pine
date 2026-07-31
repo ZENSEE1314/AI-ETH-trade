@@ -38,7 +38,7 @@ volLen    = input.int(20, "Volume average length", minval = 2, group = grpVol)
 highVolX  = input.float(1.5, "High-volume threshold (× avg)", step = 0.1, group = grpVol)
 climaxX   = input.float(2.5, "Climax-volume threshold (× avg)", step = 0.1, group = grpVol)
 colorVol  = input.bool(false, "Colour volume-significant bars", group = grpVol)
-showVSA   = input.bool(false, "Show VSA markers (use the Volume pane instead)", group = grpVol)
+showVSA   = input.bool(true, "Show VSA markers (climax / demand / supply)", group = grpVol)
 
 grpSig  = "Signals & Risk"
 scoreThreshold = input.int(60, "Min confluence to signal (0-100)", minval = 0, maxval = 100, group = grpSig)
@@ -85,7 +85,7 @@ if not na(ph)
         line.new(zBar, zPrice, sbar, ph, color = color.new(color.gray, 45), width = 1)
     if showSwings and not na(prevPH)
         bool hh = ph > prevPH
-        label.new(sbar, ph, hh ? "HH" : "LH", style = label.style_label_down, color = color.new(color.gray, 80), textcolor = hh ? color.teal : color.red, size = size.tiny)
+        label.new(sbar, ph, hh ? "HH" : "LH", style = label.style_label_down, color = hh ? color.new(color.green, 10) : color.new(color.red, 10), textcolor = color.white, size = size.small)
     zBar := sbar
     zPrice := ph
     prevPH := ph
@@ -102,7 +102,7 @@ if not na(pl)
         line.new(zBar, zPrice, sbar, pl, color = color.new(color.gray, 45), width = 1)
     if showSwings and not na(prevPL)
         bool hl = pl > prevPL
-        label.new(sbar, pl, hl ? "HL" : "LL", style = label.style_label_up, color = color.new(color.gray, 80), textcolor = hl ? color.teal : color.red, size = size.tiny)
+        label.new(sbar, pl, hl ? "HL" : "LL", style = label.style_label_up, color = hl ? color.new(color.green, 10) : color.new(color.red, 10), textcolor = color.white, size = size.small)
     zBar := sbar
     zPrice := pl
     prevPL := pl
@@ -247,8 +247,8 @@ plotshape(showVSA and vsaDemand and not climaxVol, "VSA Demand", style = shape.t
 plotshape(showVSA and vsaSupply and not climaxVol, "VSA Supply", style = shape.triangledown, location = location.abovebar, color = color.new(color.orange, 0), size = size.tiny, text = "S")
 plotchar(showVSA and climaxVol, "VSA Climax", "◆", location = location.abovebar, color = color.fuchsia, size = size.tiny, text = "CLX")
 plotchar(showVSA and absorption, "VSA Absorption", "▣", location = location.belowbar, color = color.yellow, size = size.tiny)
-plotchar(showVSA and noDemand, "No Demand", "▽", location = location.abovebar, color = color.new(color.gray, 20), size = size.tiny, text = "ND")
-plotchar(showVSA and noSupply, "No Supply", "△", location = location.belowbar, color = color.new(color.gray, 20), size = size.tiny, text = "NS")
+// (No-demand / no-supply markers removed from the price chart to reduce noise;
+//  that read still lives in the Volume Analysis pane and the dashboard table.)
 
 // --------------------------------------------------- Premium / Discount ------
 bool haveRange = not na(lastSwingHigh) and not na(lastSwingLow) and lastSwingHigh > lastSwingLow
