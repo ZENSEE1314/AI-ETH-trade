@@ -22,10 +22,11 @@ eqTolMult = input.float(0.10, "Equal H/L tolerance (× ATR)", minval = 0.0, step
 showEq    = input.bool(true, "Show EQH / EQL", group = grpLiq)
 showSweep = input.bool(true, "Show liquidity sweeps", group = grpLiq)
 
-grpFVG  = "Fair Value Gaps"
+grpFVG  = "Fair Value Gaps & Order Blocks"
 showFVG   = input.bool(true, "Show FVGs", group = grpFVG)
-maxFVG    = input.int(8, "Max FVGs kept per side", minval = 1, maxval = 30, group = grpFVG)
-fvgExtend = input.int(20, "FVG extend (bars)", minval = 1, group = grpFVG)
+showOB    = input.bool(true, "Show order blocks", group = grpFVG)
+maxFVG    = input.int(8, "Max FVGs / OBs kept per side", minval = 1, maxval = 30, group = grpFVG)
+fvgExtend = input.int(20, "FVG / OB extend (bars)", minval = 1, group = grpFVG)
 
 grpVwap = "VWAP"
 showVwap  = input.bool(true, "Show VWAP + bands", group = grpVwap)
@@ -175,6 +176,38 @@ if showMS
         label.new(bar_index, support, chochDn ? "CHoCH" : "BMS", style = label.style_none, textcolor = chochDn ? color.orange : color.teal, size = size.small)
 
 // (EQH / EQL are drawn inline above, when a confirmed swing equals the prior one.)
+
+// ------------------------------------------------------- Order blocks --------
+// The last opposing candle before a structure break is the order block: the
+// last down candle before a bullish BOS/CHoCH (demand), the last up candle
+// before a bearish break (supply).
+var int   obDownBar = na
+var float obDownHi  = na
+var float obDownLo  = na
+var int   obUpBar   = na
+var float obUpHi    = na
+var float obUpLo    = na
+if close < open
+    obDownBar := bar_index
+    obDownHi  := high
+    obDownLo  := low
+else if close > open
+    obUpBar := bar_index
+    obUpHi  := high
+    obUpLo  := low
+
+var array<box> bullOBs = array.new<box>()
+var array<box> bearOBs = array.new<box>()
+if showOB and (bosUp or chochUp) and not na(obDownBar)
+    ob = box.new(obDownBar, obDownHi, bar_index + fvgExtend, obDownLo, border_color = color.new(color.teal, 20), bgcolor = color.new(color.teal, 82))
+    array.push(bullOBs, ob)
+    if array.size(bullOBs) > maxFVG
+        box.delete(array.shift(bullOBs))
+if showOB and (bosDn or chochDn) and not na(obUpBar)
+    ob = box.new(obUpBar, obUpHi, bar_index + fvgExtend, obUpLo, border_color = color.new(color.maroon, 20), bgcolor = color.new(color.maroon, 82))
+    array.push(bearOBs, ob)
+    if array.size(bearOBs) > maxFVG
+        box.delete(array.shift(bearOBs))
 
 // ---------------------------------------------------- Liquidity sweeps -------
 // Buy-side sweep: wick takes prior swing high but closes back below (traps longs)
