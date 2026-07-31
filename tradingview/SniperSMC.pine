@@ -13,9 +13,9 @@ indicator("Sniper SMC + VWAP + VSA", overlay = true, max_boxes_count = 500, max_
 
 // ------------------------------------------------------------------- Inputs --
 grpMS   = "Market Structure"
-swingLen = input.int(8, "Swing Pivot Length", minval = 2, group = grpMS)
+swingLen = input.int(10, "Swing Pivot Length", minval = 2, group = grpMS)
 showSwings = input.bool(true, "Show HH / HL / LH / LL", group = grpMS)
-showStructLine = input.bool(true, "Connect swings with structure line", group = grpMS)
+showStructLine = input.bool(false, "Connect swings with structure line", group = grpMS)
 showMS   = input.bool(true, "Show BOS / CHoCH", group = grpMS)
 
 grpLiq  = "Liquidity (EQH / EQL & Sweeps)"
@@ -38,7 +38,7 @@ volLen    = input.int(20, "Volume average length", minval = 2, group = grpVol)
 highVolX  = input.float(1.5, "High-volume threshold (× avg)", step = 0.1, group = grpVol)
 climaxX   = input.float(2.5, "Climax-volume threshold (× avg)", step = 0.1, group = grpVol)
 colorVol  = input.bool(false, "Colour volume-significant bars", group = grpVol)
-showVSA   = input.bool(true, "Show VSA markers (climax / demand / supply)", group = grpVol)
+showVSA   = input.bool(false, "Show VSA markers on price (VSA lives in the Volume pane)", group = grpVol)
 
 grpSig  = "Signals & Risk"
 scoreThreshold = input.int(60, "Min confluence to signal (0-100)", minval = 0, maxval = 100, group = grpSig)
@@ -83,9 +83,10 @@ if not na(ph)
         eqh := true
     if showStructLine and not na(zBar)
         line.new(zBar, zPrice, sbar, ph, color = color.new(color.gray, 45), width = 1)
-    if showSwings and not na(prevPH)
-        bool hh = ph > prevPH
-        label.new(sbar, ph, hh ? "HH" : "LH", style = label.style_label_down, color = hh ? color.new(color.green, 10) : color.new(color.red, 10), textcolor = color.white, size = size.small)
+    if showSwings
+        label.new(sbar, ph, "", style = label.style_circle, color = color.new(color.red, 0), size = size.tiny)
+        if not na(prevPH)
+            label.new(sbar, ph, ph > prevPH ? "HH" : "LH", style = label.style_label_down, color = color.new(color.black, 100), textcolor = color.white, size = size.small)
     zBar := sbar
     zPrice := ph
     prevPH := ph
@@ -100,9 +101,10 @@ if not na(pl)
         eql := true
     if showStructLine and not na(zBar)
         line.new(zBar, zPrice, sbar, pl, color = color.new(color.gray, 45), width = 1)
-    if showSwings and not na(prevPL)
-        bool hl = pl > prevPL
-        label.new(sbar, pl, hl ? "HL" : "LL", style = label.style_label_up, color = hl ? color.new(color.green, 10) : color.new(color.red, 10), textcolor = color.white, size = size.small)
+    if showSwings
+        label.new(sbar, pl, "", style = label.style_circle, color = color.new(color.green, 0), size = size.tiny)
+        if not na(prevPL)
+            label.new(sbar, pl, pl > prevPL ? "HL" : "LL", style = label.style_label_up, color = color.new(color.black, 100), textcolor = color.white, size = size.small)
     zBar := sbar
     zPrice := pl
     prevPL := pl
@@ -134,10 +136,10 @@ if not na(support) and not supBroken and close < support
 if showMS
     if (bosUp or chochUp) and not na(resBar)
         line.new(resBar, resistance, bar_index, resistance, color = color.new(chochUp ? color.orange : color.teal, 0), style = line.style_dashed, width = 1)
-        label.new(bar_index, resistance, chochUp ? "CHoCH" : "BOS", style = label.style_label_down, color = color.new(chochUp ? color.orange : color.teal, 10), textcolor = color.white, size = size.tiny)
+        label.new(bar_index, resistance, chochUp ? "CHoCH" : "BMS", style = label.style_none, textcolor = chochUp ? color.orange : color.teal, size = size.small)
     if (bosDn or chochDn) and not na(supBar)
         line.new(supBar, support, bar_index, support, color = color.new(chochDn ? color.orange : color.maroon, 0), style = line.style_dashed, width = 1)
-        label.new(bar_index, support, chochDn ? "CHoCH" : "BOS", style = label.style_label_up, color = color.new(chochDn ? color.orange : color.maroon, 10), textcolor = color.white, size = size.tiny)
+        label.new(bar_index, support, chochDn ? "CHoCH" : "BMS", style = label.style_none, textcolor = chochDn ? color.orange : color.teal, size = size.small)
 
 // --------------------------------------------------------- EQH / EQL draw ----
 if showEq and eqh and not na(prevPH)
