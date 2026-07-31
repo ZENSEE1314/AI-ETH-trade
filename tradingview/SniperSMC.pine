@@ -15,6 +15,7 @@ indicator("Sniper SMC + VWAP + VSA", overlay = true, max_boxes_count = 500, max_
 grpMS   = "Market Structure"
 swingLen = input.int(8, "Swing Pivot Length", minval = 2, group = grpMS)
 showSwings = input.bool(true, "Show HH / HL / LH / LL", group = grpMS)
+showStructLine = input.bool(true, "Connect swings with structure line", group = grpMS)
 showMS   = input.bool(true, "Show BOS / CHoCH", group = grpMS)
 
 grpLiq  = "Liquidity (EQH / EQL & Sweeps)"
@@ -36,8 +37,8 @@ grpVol  = "Volume / VSA"
 volLen    = input.int(20, "Volume average length", minval = 2, group = grpVol)
 highVolX  = input.float(1.5, "High-volume threshold (× avg)", step = 0.1, group = grpVol)
 climaxX   = input.float(2.5, "Climax-volume threshold (× avg)", step = 0.1, group = grpVol)
-colorVol  = input.bool(true, "Colour volume-significant bars", group = grpVol)
-showVSA   = input.bool(true, "Show VSA markers", group = grpVol)
+colorVol  = input.bool(false, "Colour volume-significant bars", group = grpVol)
+showVSA   = input.bool(false, "Show VSA markers (use the Volume pane instead)", group = grpVol)
 
 grpSig  = "Signals & Risk"
 scoreThreshold = input.int(60, "Min confluence to signal (0-100)", minval = 0, maxval = 100, group = grpSig)
@@ -65,6 +66,10 @@ var bool  resBroken  = true
 var float support    = na
 var bool  supBroken  = true
 var int   trend      = 0   // 1 bullish, -1 bearish, 0 undecided
+var int   resBar     = na  // bar where current resistance swing formed
+var int   supBar     = na  // bar where current support swing formed
+var int   zBar       = na  // previous swing point for the connecting structure line
+var float zPrice     = na
 
 // Equal-highs / equal-lows tracking
 var float prevPH = na
@@ -73,25 +78,37 @@ bool eqh = false
 bool eql = false
 
 if not na(ph)
+    int sbar = bar_index - swingLen
     if not na(prevPH) and atrOk and math.abs(ph - prevPH) <= eqTolMult * atr
         eqh := true
+    if showStructLine and not na(zBar)
+        line.new(zBar, zPrice, sbar, ph, color = color.new(color.gray, 45), width = 1)
     if showSwings and not na(prevPH)
         bool hh = ph > prevPH
-        label.new(bar_index - swingLen, ph, hh ? "HH" : "LH", style = label.style_label_down, color = color.new(color.gray, 75), textcolor = hh ? color.teal : color.red, size = size.tiny)
+        label.new(sbar, ph, hh ? "HH" : "LH", style = label.style_label_down, color = color.new(color.gray, 80), textcolor = hh ? color.teal : color.red, size = size.tiny)
+    zBar := sbar
+    zPrice := ph
     prevPH := ph
     lastSwingHigh := ph
     resistance := ph
+    resBar := sbar
     resBroken := false
 
 if not na(pl)
+    int sbar = bar_index - swingLen
     if not na(prevPL) and atrOk and math.abs(pl - prevPL) <= eqTolMult * atr
         eql := true
+    if showStructLine and not na(zBar)
+        line.new(zBar, zPrice, sbar, pl, color = color.new(color.gray, 45), width = 1)
     if showSwings and not na(prevPL)
         bool hl = pl > prevPL
-        label.new(bar_index - swingLen, pl, hl ? "HL" : "LL", style = label.style_label_up, color = color.new(color.gray, 75), textcolor = hl ? color.teal : color.red, size = size.tiny)
+        label.new(sbar, pl, hl ? "HL" : "LL", style = label.style_label_up, color = color.new(color.gray, 80), textcolor = hl ? color.teal : color.red, size = size.tiny)
+    zBar := sbar
+    zPrice := pl
     prevPL := pl
     lastSwingLow := pl
     support := pl
+    supBar := sbar
     supBroken := false
 
 // Breaks -> BOS (with trend) or CHoCH (against trend)
@@ -115,14 +132,12 @@ if not na(support) and not supBroken and close < support
     trend := -1
 
 if showMS
-    if bosUp
-        label.new(bar_index, low, "BOS", style = label.style_label_up, color = color.new(color.teal, 20), textcolor = color.white, size = size.tiny)
-    if chochUp
-        label.new(bar_index, low, "CHoCH", style = label.style_label_up, color = color.new(color.green, 10), textcolor = color.white, size = size.tiny)
-    if bosDn
-        label.new(bar_index, high, "BOS", style = label.style_label_down, color = color.new(color.maroon, 20), textcolor = color.white, size = size.tiny)
-    if chochDn
-        label.new(bar_index, high, "CHoCH", style = label.style_label_down, color = color.new(color.red, 10), textcolor = color.white, size = size.tiny)
+    if (bosUp or chochUp) and not na(resBar)
+        line.new(resBar, resistance, bar_index, resistance, color = color.new(chochUp ? color.orange : color.teal, 0), style = line.style_dashed, width = 1)
+        label.new(bar_index, resistance, chochUp ? "CHoCH" : "BOS", style = label.style_label_down, color = color.new(chochUp ? color.orange : color.teal, 10), textcolor = color.white, size = size.tiny)
+    if (bosDn or chochDn) and not na(supBar)
+        line.new(supBar, support, bar_index, support, color = color.new(chochDn ? color.orange : color.maroon, 0), style = line.style_dashed, width = 1)
+        label.new(bar_index, support, chochDn ? "CHoCH" : "BOS", style = label.style_label_up, color = color.new(chochDn ? color.orange : color.maroon, 10), textcolor = color.white, size = size.tiny)
 
 // --------------------------------------------------------- EQH / EQL draw ----
 if showEq and eqh and not na(prevPH)
