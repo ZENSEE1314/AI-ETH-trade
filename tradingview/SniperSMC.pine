@@ -16,6 +16,7 @@ grpMS   = "Market Structure"
 swingLen = input.int(10, "Swing Pivot Length", minval = 2, group = grpMS)
 showSwings = input.bool(true, "Show HH / HL / LH / LL", group = grpMS)
 showMS   = input.bool(true, "Show BMS / CHoCH", group = grpMS)
+showRange = input.bool(true, "Show current range (dotted H/L)", group = grpMS)
 
 grpLiq  = "Liquidity (EQH / EQL & Sweeps)"
 eqTolMult = input.float(0.10, "Equal H/L tolerance (× ATR)", minval = 0.0, step = 0.05, group = grpLiq)
@@ -212,6 +213,19 @@ if showOB and (bosDn or chochDn) and not na(obUpBar)
     array.push(bearOBs, ob)
     if array.size(bearOBs) > maxFVG
         box.delete(array.shift(bearOBs))
+
+// -------------------------------------------------- Current dealing range ----
+// Dotted lines from the latest confirmed swing high and low, extended to now
+// (the active range), matching the Expo look.
+var line rangeHi = na
+var line rangeLo = na
+if showRange
+    line.delete(rangeHi)
+    line.delete(rangeLo)
+    if not na(lastHigh)
+        rangeHi := line.new(lastHighBar, lastHigh, bar_index, lastHigh, color = color.rgb(59, 235, 255), style = line.style_dotted, width = 2)
+    if not na(lastLow)
+        rangeLo := line.new(lastLowBar, lastLow, bar_index, lastLow, color = color.rgb(59, 235, 255), style = line.style_dotted, width = 2)
 
 // ---------------------------------------------------- Liquidity sweeps -------
 // Buy-side sweep: wick takes prior swing high but closes back below (traps longs)
