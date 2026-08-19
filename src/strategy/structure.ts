@@ -1,6 +1,6 @@
 // Market structure: swing points, HH/HL/LH/LL, BOS, CHoCH.
 
-import type { Candle, StructureState, Swing } from '../types.js';
+import type { Candle, Side, StructureState, Swing } from '../types.js';
 
 /**
  * Detect swing highs/lows using a symmetric fractal of width `lookback`.
@@ -21,6 +21,30 @@ export function findSwings(candles: Candle[], lookback = 2): Swing[] {
     if (isLow) swings.push({ index: i, time: c.time, price: c.low, kind: 'low' });
   }
   return swings;
+}
+
+/**
+ * The most recent reaction swing to anchor an entry on.
+ *
+ * For a long we step down looking for the latest swing LOW — the higher-low
+ * (or the low a sweep reclaimed) that price is pushing up from. `higher` marks
+ * whether it prints above the prior swing low (a true HL) versus a lower low.
+ * For a short it's the mirror: the latest swing HIGH, `higher=false` = a proper
+ * lower-high. This is the pivot the 15m setup and 1m trigger key off of.
+ */
+export function lastReactionSwing(
+  candles: Candle[],
+  side: Side,
+  lookback = 2,
+): { swing: Swing; higher: boolean } | null {
+  const swings = findSwings(candles, lookback);
+  const wanted = side === 'long' ? 'low' : 'high';
+  const matches = swings.filter((s) => s.kind === wanted);
+  const swing = matches.at(-1);
+  if (!swing) return null;
+  const prev = matches.at(-2);
+  const higher = prev ? swing.price > prev.price : false;
+  return { swing, higher };
 }
 
 /**

@@ -25,11 +25,17 @@ runs when you supply your own Bitunix API keys *and* set `TRADING_MODE=live`.
 ## What it does
 
 - **Multi-timeframe analysis** — 4H bias → 1H confirmation → 15M setup → 1M entry.
+- **Draw on liquidity (4H)** — a 4H sweep of one side plus an untapped pool on the
+  other sets the high-probability direction *and* the take-profit: the sweep picks
+  the side, the opposing resting pool is where price is drawn
+  (`src/strategy/drawOnLiquidity.ts`).
 - **Smart Money Concepts** — market structure (BOS/CHoCH, HH/HL/LH/LL), liquidity
   (PDH/PDL/PWH/PWL, equal highs/lows, sweeps/stop-hunts), Fair Value Gaps,
   premium/discount, VWAP bands, Power of 3.
-- **Sniper entry engine** — only fires when bias, context, liquidity, structure and
-  timing align above a confluence threshold (`src/strategy/signal.ts`).
+- **Sniper entry engine** — after the 4H draw, it steps down to the 15M reaction
+  swing (HL long / LH short) to confirm the setup, then to the 1M reaction swing to
+  time the trigger with a tight stop — only firing above a confluence threshold
+  (`src/strategy/signal.ts`).
 - **Risk core** — position sizing from stop distance, min R:R, per-trade risk cap,
   daily & weekly loss **kill switches**, leverage/liquidation guard.
 - **TradingView webhook** — drive entries from your own Pine alerts.

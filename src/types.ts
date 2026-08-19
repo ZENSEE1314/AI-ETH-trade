@@ -51,6 +51,20 @@ export interface LiquidityLevels {
   equalLows: number[];
 }
 
+/**
+ * The higher-timeframe "draw on liquidity" read: price has swept a resting
+ * liquidity pool on one side and is now drawn toward an opposing resting pool.
+ * On the 4H this is often the clearest tell of the day's high-probability
+ * direction — the sweep sets the side, the opposing pool sets the target.
+ */
+export interface DrawOnLiquidity {
+  side: Side; // long after a sell-side sweep, short after a buy-side sweep
+  sweptLevel: number; // the resting liquidity that was grabbed (stop hunt)
+  sweepExtreme: number; // the wick extreme of the sweep (protective-stop anchor)
+  drawTarget: number; // opposing resting liquidity we're drawn toward (take-profit)
+  reasons: string[];
+}
+
 /** VWAP with standard-deviation bands. */
 export interface VwapState {
   vwap: number;

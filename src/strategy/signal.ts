@@ -1,32 +1,43 @@
 // The Sniper Entry System: assembles a trade Signal by walking the core
 // philosophy in order — Bias > Context > Liquidity > Market Structure >
 // Timing > Execution. Each stage must agree or the setup is rejected.
+//
+// Top-down entry model (the ETH example this was tuned on):
+//   4H  — draw on liquidity: a sweep sets the side, the opposing resting pool
+//         sets the target. This is the high-probability read the lower
+//         timeframes can't show on their own.
+//   15M — the reaction swing (HL for a long / LH for a short) that confirms the
+//         setup after the 4H sweep.
+//   1M  — the next reaction swing that times the entry, giving a tight stop and
+//         a long runway toward the 4H draw.
 
 import { randomUUID } from 'node:crypto';
 import type { Candle, Signal, Side } from '../types.js';
 import { buildBias } from './bias.js';
-import { readStructure } from './structure.js';
+import { readStructure, lastReactionSwing } from './structure.js';
 import { buildLiquidity, detectSweep } from './liquidity.js';
-import { latestUnmitigatedFVG, premiumDiscount } from './fvg.js';
+import { detectDrawOnLiquidity } from './drawOnLiquidity.js';
+import { premiumDiscount } from './fvg.js';
 import { readVwap } from './vwap.js';
 import { analyzeCandle } from './candles.js';
 
 /** Multi-timeframe input. Any series may be omitted; the engine degrades gracefully. */
 export interface MarketSnapshot {
   symbol: string;
-  h4: Candle[]; // bias
+  h4: Candle[]; // bias / draw on liquidity
   h1: Candle[]; // confirmation / context
   m15: Candle[]; // setup
   m1: Candle[]; // entry / timing
 }
 
 const WEIGHTS = {
-  bias: 25,
-  context: 15,
-  liquidity: 20,
-  structure: 20,
-  timing: 12,
-  vwap: 8,
+  draw: 28, // 4H draw on liquidity (or HTF bias when no draw is present)
+  context: 12, // 1H not opposing / aligned
+  structure: 14, // setup-TF structure agrees
+  setup: 16, // 15M reaction swing confirms
+  entry: 18, // 1M reaction swing + candle times the trigger
+  liquidity: 6, // discount/premium pricing bonus
+  vwap: 6,
 } as const;
 
 export function generateSignal(snap: MarketSnapshot): Signal | null {
@@ -37,49 +48,59 @@ export function generateSignal(snap: MarketSnapshot): Signal | null {
   const entryTf = snap.m1.length ? snap.m1 : setup;
   if (setup.length < 10 || entryTf.length < 3) return null;
 
-  // 1. BIAS (4H) --------------------------------------------------------------
-  const bias = buildBias(snap.h4.length ? snap.h4 : snap.h1.length ? snap.h1 : setup);
-  if (bias.direction === 'neutral') return null;
-  const side: Side = bias.direction;
-  confluence += WEIGHTS.bias;
-  reasons.push(`BIAS: ${side.toUpperCase()} — ${bias.reasons.join('; ')}`);
+  // 1. DRAW ON LIQUIDITY (4H) — the high-probability directional read. --------
+  // The 4H sweep + opposing resting pool sets both the side and the target.
+  // If no clean draw exists, fall back to the composite HTF bias.
+  const dol = snap.h4.length ? detectDrawOnLiquidity(snap.h4) : null;
+  let side: Side;
+  if (dol) {
+    side = dol.side;
+    confluence += WEIGHTS.draw;
+    reasons.push(`DRAW (4H): ${dol.reasons.join('; ')}`);
+  } else {
+    const bias = buildBias(snap.h4.length ? snap.h4 : snap.h1.length ? snap.h1 : setup);
+    if (bias.direction === 'neutral') return null;
+    side = bias.direction;
+    confluence += WEIGHTS.draw;
+    reasons.push(`BIAS (no 4H draw): ${side.toUpperCase()} — ${bias.reasons.join('; ')}`);
+  }
 
-  // 2. CONTEXT (1H) — confirmation must not oppose the bias --------------------
+  // 2. CONTEXT (1H) — confirmation must not oppose the direction. --------------
   const ctx = readStructure(snap.h1.length ? snap.h1 : setup);
-  const ctxAligned =
-    (side === 'long' && ctx.trend !== 'bearish') || (side === 'short' && ctx.trend !== 'bullish');
-  if (!ctxAligned) {
-    return null; // conflicting timeframes — stand aside
+  const ctxOpposes =
+    (side === 'long' && ctx.trend === 'bearish') || (side === 'short' && ctx.trend === 'bullish');
+  if (ctxOpposes && !ctx.choch) {
+    return null; // 1H structurally against us with no reversal — stand aside
   }
   if ((side === 'long' && ctx.trend === 'bullish') || (side === 'short' && ctx.trend === 'bearish')) {
     confluence += WEIGHTS.context;
     reasons.push(`CONTEXT: 1H aligned (${ctx.label})`);
   } else {
-    reasons.push('CONTEXT: 1H neutral, not opposing');
+    reasons.push(`CONTEXT: 1H not opposing (${ctx.label})`);
   }
 
-  // 3. LIQUIDITY — require a sweep or key-level interaction in our favor -------
+  // 3. LIQUIDITY / PRICING — sweep in our favor or good discount/premium. ------
   const liq = buildLiquidity(setup);
   const sweep = detectSweep(setup, liq);
-  const swept = sweep.swept;
   const favorableSweep =
-    (side === 'long' && swept === 'sell-side') || (side === 'short' && swept === 'buy-side');
+    (side === 'long' && sweep.swept === 'sell-side') ||
+    (side === 'short' && sweep.swept === 'buy-side');
   if (favorableSweep) {
     confluence += WEIGHTS.liquidity;
-    reasons.push(`LIQUIDITY: ${swept} swept @ ${sweep.level?.toFixed(2)} then rejected`);
+    reasons.push(`LIQUIDITY: ${sweep.swept} swept @ ${sweep.level?.toFixed(2)} then rejected`);
   } else {
     const pd = premiumDiscount(setup);
     const atDiscountForLong = side === 'long' && pd.zone === 'discount';
     const atPremiumForShort = side === 'short' && pd.zone === 'premium';
     if (atDiscountForLong || atPremiumForShort) {
       confluence += WEIGHTS.liquidity * 0.5;
-      reasons.push(`LIQUIDITY: entering from ${pd.zone} (no sweep yet)`);
+      reasons.push(`LIQUIDITY: entering from ${pd.zone}`);
     } else {
       reasons.push('LIQUIDITY: no favorable sweep / poor pricing');
     }
   }
 
-  // 4. MARKET STRUCTURE — CHoCH/BOS shift in bias direction --------------------
+  // 4. MARKET STRUCTURE (setup TF) — CHoCH/BOS in our direction. ---------------
   const struct = readStructure(setup);
   const structAligned =
     (side === 'long' && (struct.trend === 'bullish' || struct.choch)) ||
@@ -91,21 +112,38 @@ export function generateSignal(snap: MarketSnapshot): Signal | null {
     reasons.push(`STRUCTURE: not confirmed (${struct.label})`);
   }
 
-  // 5. TIMING — FVG entry window + candle confirmation ------------------------
-  const fvg = latestUnmitigatedFVG(entryTf, side);
+  // 5. SETUP (15M) — the reaction swing after the sweep (HL long / LH short). --
+  const setupSwing = lastReactionSwing(setup, side);
+  if (!setupSwing) return null; // no pivot to build the setup on
+  if (setupSwing.higher) {
+    confluence += WEIGHTS.setup;
+    reasons.push(
+      `SETUP: 15M ${side === 'long' ? 'higher-low' : 'lower-high'} @ ${setupSwing.swing.price.toFixed(2)}`,
+    );
+  } else {
+    confluence += WEIGHTS.setup * 0.5;
+    reasons.push(
+      `SETUP: 15M ${side === 'long' ? 'swing low' : 'swing high'} @ ${setupSwing.swing.price.toFixed(2)} (not yet a ${side === 'long' ? 'HL' : 'LH'})`,
+    );
+  }
+
+  // 6. ENTRY (1M) — the reaction swing that times the trigger + candle confirm.
+  const entrySwing = lastReactionSwing(entryTf, side) ?? setupSwing;
   const lastCandle = analyzeCandle(entryTf.at(-1)!);
   const candleConfirms =
     (side === 'long' && (lastCandle.bullish || lastCandle.rejection === 'bottom')) ||
     (side === 'short' && (lastCandle.bearish || lastCandle.rejection === 'top'));
-  if (fvg) {
-    confluence += WEIGHTS.timing;
-    reasons.push(`TIMING: unmitigated ${side} FVG ${fvg.bottom.toFixed(2)}-${fvg.top.toFixed(2)}`);
-  }
   if (candleConfirms) {
-    reasons.push(`TIMING: entry candle confirms (${lastCandle.strength})`);
+    confluence += WEIGHTS.entry;
+    reasons.push(
+      `ENTRY: 1M ${side === 'long' ? 'HL' : 'LH'} @ ${entrySwing.swing.price.toFixed(2)}, candle confirms (${lastCandle.strength})`,
+    );
+  } else {
+    confluence += WEIGHTS.entry * 0.4;
+    reasons.push(`ENTRY: 1M ${side === 'long' ? 'HL' : 'LH'} @ ${entrySwing.swing.price.toFixed(2)}, awaiting candle confirmation`);
   }
 
-  // 6. VWAP confirmation ------------------------------------------------------
+  // 7. VWAP confirmation. -----------------------------------------------------
   const vwap = readVwap(entryTf);
   const vwapAgrees =
     (side === 'long' && vwap.signal.includes('long')) ||
@@ -115,12 +153,14 @@ export function generateSignal(snap: MarketSnapshot): Signal | null {
     reasons.push(`VWAP: ${vwap.signal}`);
   }
 
-  // 7. EXECUTION — price, stop, target ---------------------------------------
+  // 8. EXECUTION — entry off the 1M swing, tight stop under it, draw as target.
   const price = entryTf.at(-1)!.close;
-  const entry = fvg ? (fvg.top + fvg.bottom) / 2 : price;
+  const entry = price;
 
-  const stopLoss = computeStop(side, entry, setup, sweep.level);
-  const takeProfit = computeTarget(side, entry, liq, struct);
+  const stopLoss = computeStop(side, entry, entrySwing.swing.price, setup);
+  const takeProfit = dol
+    ? dol.drawTarget
+    : computeTarget(side, entry, liq, struct);
   const risk = Math.abs(entry - stopLoss);
   const reward = Math.abs(takeProfit - entry);
   if (risk <= 0 || reward <= 0) return null;
@@ -141,16 +181,20 @@ export function generateSignal(snap: MarketSnapshot): Signal | null {
   };
 }
 
-function computeStop(side: Side, entry: number, setup: Candle[], sweptLevel: number | null): number {
+/**
+ * Stop sits just past the 1M reaction swing the entry is timed off — the tight
+ * invalidation that gives the long runway toward the 4H draw. If that pivot is
+ * on the wrong side of entry (a bad swing), fall back to the setup-window
+ * extreme so risk is never zero or inverted.
+ */
+function computeStop(side: Side, entry: number, swingPrice: number, setup: Candle[]): number {
+  const buffer = entry * 0.0015;
   const window = setup.slice(-10);
-  const swingLow = Math.min(...window.map((c) => c.low));
-  const swingHigh = Math.max(...window.map((c) => c.high));
-  const buffer = entry * 0.0015; // small buffer beyond the wick
   if (side === 'long') {
-    const base = sweptLevel != null ? Math.min(sweptLevel, swingLow) : swingLow;
+    const base = swingPrice < entry ? swingPrice : Math.min(...window.map((c) => c.low));
     return base - buffer;
   }
-  const base = sweptLevel != null ? Math.max(sweptLevel, swingHigh) : swingHigh;
+  const base = swingPrice > entry ? swingPrice : Math.max(...window.map((c) => c.high));
   return base + buffer;
 }
 

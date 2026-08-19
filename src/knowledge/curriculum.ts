@@ -77,6 +77,7 @@ export const CURRICULUM: Module[] = [
       { topic: 'Equal Highs / Equal Lows', summary: 'Repeated touches leave obvious pools that are prime sweep targets.', appliedIn: 'liquidity.ts equalLevels' },
       { topic: 'Liquidity Sweeps & Stop Hunts', summary: 'Price spikes beyond a level to grab stops, then reverses — our preferred entry trigger.', appliedIn: 'liquidity.ts detectSweep; signal.ts liquidity stage' },
       { topic: 'Institutional Order Flow', summary: 'Smart money accumulates against retail stops; follow the reversal after the sweep, not the breakout.', appliedIn: 'signal.ts favors post-sweep entries' },
+      { topic: 'Draw on Liquidity (4H)', summary: 'On the 4H a sweep of one side plus an untapped pool on the other reveals the day’s high-probability direction: the sweep picks the side, the opposing pool is the target price is drawn toward.', appliedIn: 'strategy/drawOnLiquidity.ts detectDrawOnLiquidity; signal.ts draw stage' },
     ],
   },
   {
@@ -111,9 +112,10 @@ export const CURRICULUM: Module[] = [
   {
     title: 'Execution & Trade Management',
     lessons: [
-      { topic: 'The Sniper Entry System', summary: 'Only fire when bias, context, liquidity, structure and timing all align above the confluence threshold.', appliedIn: 'strategy/signal.ts generateSignal' },
-      { topic: 'Setting Stop Loss', summary: 'Stop goes beyond the invalidation (the swept level / structural swing), plus a small buffer.', appliedIn: 'signal.ts computeStop' },
-      { topic: 'Take Profit Strategies', summary: 'Target the next liquidity pool (PDH/PDL/equal levels/opposing swing). Partial + trail hooks are provided for your inputs.', appliedIn: 'signal.ts computeTarget' },
+      { topic: 'The Sniper Entry System', summary: 'Top-down: the 4H draw on liquidity sets the side and target, the 15M reaction swing confirms the setup, and the 1M reaction swing times the trigger — only firing above the confluence threshold.', appliedIn: 'strategy/signal.ts generateSignal' },
+      { topic: 'Stepping 15M → 1M for the Entry', summary: 'After the 4H sweep, drop to 15M for the reaction swing (HL long / LH short), then to 1M for the next reaction swing to enter on — a tight stop under it, a long runway to the draw.', appliedIn: 'structure.ts lastReactionSwing; signal.ts setup + entry stages' },
+      { topic: 'Setting Stop Loss', summary: 'Stop goes just beyond the 1M reaction swing the entry is timed off (its invalidation), plus a small buffer.', appliedIn: 'signal.ts computeStop' },
+      { topic: 'Take Profit Strategies', summary: 'Target the draw on liquidity — the 4H resting pool price is pulled toward — falling back to the next PDH/PDL/equal level/opposing swing when no draw is mapped.', appliedIn: 'signal.ts takeProfit / computeTarget' },
       { topic: 'Managing Winning Trades', summary: 'Let winners run to the mapped target; scaling/trailing rules plug in here when you provide them.', appliedIn: 'tradeEngine manageOpenPositions' },
       { topic: 'Managing Losing Trades', summary: 'NEVER move a stop once set. The stop is the trade’s invalidation, full stop.', appliedIn: 'paperBroker keeps stopLoss immutable' },
     ],
