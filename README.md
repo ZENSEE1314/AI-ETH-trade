@@ -71,6 +71,25 @@ Production build:
 npm run build && npm start
 ```
 
+## Backtesting
+
+Measure how often the 1M-timed entries actually reach the draw (take-profit)
+before the stop, on a 1-minute history the tool resamples up to 15M/1H/4H:
+
+```bash
+npm run backtest -- data/eth-1m.json        # replay a saved 1m history (JSON)
+npm run backtest -- --fetch ETHUSDT 1000    # pull recent 1m from Bitunix
+npm run backtest -- --demo                  # synthetic smoke test
+```
+
+It walks the history minute by minute with **no lookahead** (higher timeframes
+are rebuilt only from candles seen so far), applies the same confluence / R:R
+gates as the live engine (override with `--min-conf` / `--min-rr`), and reports
+the reached-draw rate, win rate, expectancy in R, profit factor and max
+drawdown — broken down by whether the 4H or 15M draw drove each trade. The 1m
+JSON accepts either `{time,open,high,low,close,volume}` objects or
+`[time,open,high,low,close,volume]` arrays.
+
 ## Accounts & the Settings page
 
 The dashboard is gated by login. On first visit, `/login.html` lets you create the
