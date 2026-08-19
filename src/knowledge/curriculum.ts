@@ -77,7 +77,7 @@ export const CURRICULUM: Module[] = [
       { topic: 'Equal Highs / Equal Lows', summary: 'Repeated touches leave obvious pools that are prime sweep targets.', appliedIn: 'liquidity.ts equalLevels' },
       { topic: 'Liquidity Sweeps & Stop Hunts', summary: 'Price spikes beyond a level to grab stops, then reverses — our preferred entry trigger.', appliedIn: 'liquidity.ts detectSweep; signal.ts liquidity stage' },
       { topic: 'Institutional Order Flow', summary: 'Smart money accumulates against retail stops; follow the reversal after the sweep, not the breakout.', appliedIn: 'signal.ts favors post-sweep entries' },
-      { topic: 'Draw on Liquidity (4H)', summary: 'On the 4H a sweep of one side plus an untapped pool on the other reveals the day’s high-probability direction: the sweep picks the side, the opposing pool is the target price is drawn toward.', appliedIn: 'strategy/drawOnLiquidity.ts detectDrawOnLiquidity; signal.ts draw stage' },
+      { topic: 'Draw on Liquidity (4H & 15M)', summary: 'A sweep of one side plus an untapped pool on the other reveals the high-probability direction: the sweep picks the side, the opposing pool is the target price is drawn toward. Read primarily on the 4H; the 15M often shows the same both-sides picture and confirms it (or drives the direction when the 4H is silent) — then you hunt the 15M/1M entry that way.', appliedIn: 'strategy/drawOnLiquidity.ts detectDrawOnLiquidity; signal.ts draw stage (4H + 15M)' },
     ],
   },
   {

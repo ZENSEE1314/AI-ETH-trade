@@ -92,6 +92,11 @@ export interface Signal {
   confluence: number; // 0-100
   source: 'engine' | 'tradingview';
   reasons: string[]; // the Bias>Context>Liquidity>Structure>Timing trail
+  // Draw-on-liquidity context, when a sweep drove the setup (for the dashboard).
+  sweepSide?: 'buy-side' | 'sell-side'; // which resting pool was already swept
+  sweptLevel?: number; // the level that was swept
+  drawTarget?: number; // the opposing unswept pool price is drawn toward
+  drawTimeframe?: '4H' | '15M'; // where the driving draw was read
 }
 
 export interface RiskDecision {

@@ -31,13 +31,14 @@ export interface MarketSnapshot {
 }
 
 const WEIGHTS = {
-  draw: 28, // 4H draw on liquidity (or HTF bias when no draw is present)
-  context: 12, // 1H not opposing / aligned
-  structure: 14, // setup-TF structure agrees
-  setup: 16, // 15M reaction swing confirms
-  entry: 18, // 1M reaction swing + candle times the trigger
+  draw: 25, // primary draw on liquidity (or HTF bias when no draw is present)
+  ltfDraw: 8, // 15M draw agrees with the 4H draw (cross-timeframe confirmation)
+  context: 10, // 1H not opposing / aligned
+  structure: 12, // setup-TF structure agrees
+  setup: 14, // 15M reaction swing confirms
+  entry: 17, // 1M reaction swing + candle times the trigger
   liquidity: 6, // discount/premium pricing bonus
-  vwap: 6,
+  vwap: 8,
 } as const;
 
 export function generateSignal(snap: MarketSnapshot): Signal | null {
@@ -48,21 +49,38 @@ export function generateSignal(snap: MarketSnapshot): Signal | null {
   const entryTf = snap.m1.length ? snap.m1 : setup;
   if (setup.length < 10 || entryTf.length < 3) return null;
 
-  // 1. DRAW ON LIQUIDITY (4H) — the high-probability directional read. --------
-  // The 4H sweep + opposing resting pool sets both the side and the target.
-  // If no clean draw exists, fall back to the composite HTF bias.
-  const dol = snap.h4.length ? detectDrawOnLiquidity(snap.h4) : null;
+  // 1. DRAW ON LIQUIDITY — the high-probability directional read. -------------
+  // A sweep of one side plus an untapped pool on the other means price is drawn
+  // to that opposing pool. The 4H is primary; the 15M often shows the same
+  // both-sides picture and confirms (or, when the 4H is silent, drives) the
+  // direction we then use to hunt the 15M/1M entry.
+  const dol4h = snap.h4.length ? detectDrawOnLiquidity(snap.h4) : null;
+  const dolLtf = detectDrawOnLiquidity(setup, 30);
+  const driver = dol4h ?? dolLtf; // 4H wins when present
   let side: Side;
-  if (dol) {
-    side = dol.side;
+  if (driver) {
+    side = driver.side;
     confluence += WEIGHTS.draw;
-    reasons.push(`DRAW (4H): ${dol.reasons.join('; ')}`);
+    const tf = dol4h ? '4H' : '15M';
+    reasons.push(`DRAW (${tf}): ${driver.reasons.join('; ')}`);
+
+    // Cross-timeframe agreement is a strong tell; disagreement is a caution.
+    if (dol4h && dolLtf) {
+      if (dolLtf.side === dol4h.side) {
+        confluence += WEIGHTS.ltfDraw;
+        reasons.push(
+          `DRAW (15M): agrees — ${dolLtf.side} swept @ ${dolLtf.sweptLevel.toFixed(2)}, draw ${dolLtf.drawTarget.toFixed(2)}`,
+        );
+      } else {
+        reasons.push(`DRAW (15M): conflicts with 4H (15M reads ${dolLtf.side}) — 4H leads`);
+      }
+    }
   } else {
     const bias = buildBias(snap.h4.length ? snap.h4 : snap.h1.length ? snap.h1 : setup);
     if (bias.direction === 'neutral') return null;
     side = bias.direction;
     confluence += WEIGHTS.draw;
-    reasons.push(`BIAS (no 4H draw): ${side.toUpperCase()} — ${bias.reasons.join('; ')}`);
+    reasons.push(`BIAS (no draw): ${side.toUpperCase()} — ${bias.reasons.join('; ')}`);
   }
 
   // 2. CONTEXT (1H) — confirmation must not oppose the direction. --------------
@@ -158,9 +176,7 @@ export function generateSignal(snap: MarketSnapshot): Signal | null {
   const entry = price;
 
   const stopLoss = computeStop(side, entry, entrySwing.swing.price, setup);
-  const takeProfit = dol
-    ? dol.drawTarget
-    : computeTarget(side, entry, liq, struct);
+  const takeProfit = driver ? driver.drawTarget : computeTarget(side, entry, liq, struct);
   const risk = Math.abs(entry - stopLoss);
   const reward = Math.abs(takeProfit - entry);
   if (risk <= 0 || reward <= 0) return null;
@@ -178,6 +194,13 @@ export function generateSignal(snap: MarketSnapshot): Signal | null {
     confluence: Math.round(confluence),
     source: 'engine',
     reasons,
+    // Draw context for the dashboard (a long is drawn up after a sell-side sweep).
+    ...(driver && {
+      sweepSide: driver.side === 'long' ? 'sell-side' : 'buy-side',
+      sweptLevel: round(driver.sweptLevel),
+      drawTarget: round(driver.drawTarget),
+      drawTimeframe: dol4h ? '4H' : '15M',
+    }),
   };
 }
 

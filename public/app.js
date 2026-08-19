@@ -88,6 +88,12 @@ function renderSignals(signals) {
         <div><span>Stop</span> <b>${fmt(sig.stopLoss)}</b></div>
         <div><span>Target</span> <b>${fmt(sig.takeProfit)}</b></div>
       </div>
+      ${sig.drawTarget != null ? `
+      <div class="draw">
+        <span class="tag">${sig.drawTimeframe || ''} DRAW</span>
+        ${sig.sweepSide || ''} swept @ <b>${fmt(sig.sweptLevel)}</b>
+        → drawn to <b>${fmt(sig.drawTarget)}</b>
+      </div>` : ''}
       <div class="conf-bar"><div class="conf-fill" style="width:${Math.min(100, sig.confluence)}%"></div></div>
       <div class="reasons">${(sig.reasons || []).map((r) => `<div>› ${r}</div>`).join('')}</div>
     </div>`).join('');
