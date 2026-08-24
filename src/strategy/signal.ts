@@ -45,7 +45,19 @@ const WEIGHTS = {
   vwap: 6,
 } as const;
 
-export function generateSignal(snap: MarketSnapshot): Signal | null {
+/** Tuning knobs for how the setup is targeted and stopped. */
+export interface SignalOptions {
+  /** 'near' banks at the nearest opposing pool (higher win rate); 'draw' runs to
+   *  the furthest pool (bigger R, lower hit rate). Default 'draw'. */
+  targetMode?: 'near' | 'draw';
+  /** 'swing' stops just past the 1M reaction pivot (tight); 'sweep' stops behind
+   *  the sweep extreme so noise can't shake you before the move. Default 'swing'. */
+  stopMode?: 'swing' | 'sweep';
+}
+
+export function generateSignal(snap: MarketSnapshot, opts: SignalOptions = {}): Signal | null {
+  const targetMode = opts.targetMode ?? 'draw';
+  const stopMode = opts.stopMode ?? 'swing';
   const reasons: string[] = [];
   let confluence = 0;
 
@@ -200,8 +212,10 @@ export function generateSignal(snap: MarketSnapshot): Signal | null {
   const price = entryTf.at(-1)!.close;
   const entry = price;
 
-  const stopLoss = computeStop(side, entry, entrySwing.swing.price, setup);
-  const takeProfit = driver ? driver.drawTarget : computeTarget(side, entry, liq, struct);
+  const sweepAnchor = stopMode === 'sweep' ? driver?.sweepExtreme : undefined;
+  const stopLoss = computeStop(side, entry, entrySwing.swing.price, setup, sweepAnchor);
+  const drawTP = driver ? (targetMode === 'near' ? driver.nearTarget : driver.drawTarget) : null;
+  const takeProfit = drawTP ?? computeTarget(side, entry, liq, struct);
   const risk = Math.abs(entry - stopLoss);
   const reward = Math.abs(takeProfit - entry);
   if (risk <= 0 || reward <= 0) return null;
@@ -224,6 +238,7 @@ export function generateSignal(snap: MarketSnapshot): Signal | null {
       sweepSide: driver.side === 'long' ? 'sell-side' : 'buy-side',
       sweptLevel: round(driver.sweptLevel),
       drawTarget: round(driver.drawTarget),
+      nearTarget: round(driver.nearTarget),
       drawTimeframe: dol4h ? '4H' : '15M',
     }),
   };
@@ -235,14 +250,24 @@ export function generateSignal(snap: MarketSnapshot): Signal | null {
  * on the wrong side of entry (a bad swing), fall back to the setup-window
  * extreme so risk is never zero or inverted.
  */
-function computeStop(side: Side, entry: number, swingPrice: number, setup: Candle[]): number {
+function computeStop(
+  side: Side,
+  entry: number,
+  swingPrice: number,
+  setup: Candle[],
+  sweepAnchor?: number,
+): number {
   const buffer = entry * 0.0015;
   const window = setup.slice(-10);
   if (side === 'long') {
-    const base = swingPrice < entry ? swingPrice : Math.min(...window.map((c) => c.low));
+    let base = swingPrice < entry ? swingPrice : Math.min(...window.map((c) => c.low));
+    // 'sweep' mode: drop the stop to just under the sweep low so noise doesn't
+    // shake the position before it reaches the draw.
+    if (sweepAnchor != null && sweepAnchor < base) base = sweepAnchor;
     return base - buffer;
   }
-  const base = swingPrice > entry ? swingPrice : Math.max(...window.map((c) => c.high));
+  let base = swingPrice > entry ? swingPrice : Math.max(...window.map((c) => c.high));
+  if (sweepAnchor != null && sweepAnchor > base) base = sweepAnchor;
   return base + buffer;
 }
 

@@ -8,7 +8,7 @@
 // 1M-timed entries actually reach the draw before the stop?
 
 import type { Candle, Side } from '../types.js';
-import { generateSignal } from '../strategy/signal.js';
+import { generateSignal, type SignalOptions } from '../strategy/signal.js';
 import { resample } from './resample.js';
 
 export interface BacktestOptions {
@@ -17,6 +17,96 @@ export interface BacktestOptions {
   minRiskReward?: number;
   maxHoldBars?: number; // 1m bars to hold before timing out (default 240 = 4h)
   warmupBars?: number; // 1m bars to skip before trading (history to build HTFs)
+  signal?: SignalOptions; // target/stop mode passed through to generateSignal
+  partial?: boolean; // scale out at the near pool, move stop to breakeven, run to draw
+  scaleFrac?: number; // fraction banked at the near pool (default 0.5)
+}
+
+interface SimResult {
+  exitIdx: number;
+  exit: number; // final exit price (last leg)
+  rMultiple: number; // net R across all legs
+  outcome: 'win' | 'loss' | 'timeout';
+}
+
+/** Single-exit sim: stop or take-profit, whichever the bar hits first (stop wins ties). */
+function simulateSingle(
+  sig: { side: Side; entry: number; stopLoss: number; takeProfit: number },
+  m1: Candle[],
+  i: number,
+  limit: number,
+): SimResult {
+  const { side, entry, stopLoss, takeProfit } = sig;
+  const risk = Math.abs(entry - stopLoss) || 1e-9;
+  for (let j = i + 1; j < limit; j++) {
+    const c = m1[j];
+    if (side === 'long') {
+      if (c.low <= stopLoss) return { exitIdx: j, exit: stopLoss, rMultiple: (stopLoss - entry) / risk, outcome: 'loss' };
+      if (c.high >= takeProfit) return { exitIdx: j, exit: takeProfit, rMultiple: (takeProfit - entry) / risk, outcome: 'win' };
+    } else {
+      if (c.high >= stopLoss) return { exitIdx: j, exit: stopLoss, rMultiple: (entry - stopLoss) / risk, outcome: 'loss' };
+      if (c.low <= takeProfit) return { exitIdx: j, exit: takeProfit, rMultiple: (entry - takeProfit) / risk, outcome: 'win' };
+    }
+  }
+  const j = limit - 1;
+  const exit = m1[j]?.close ?? entry;
+  const r = (side === 'long' ? exit - entry : entry - exit) / risk;
+  return { exitIdx: j, exit, rMultiple: r, outcome: 'timeout' };
+}
+
+/**
+ * Scale-out sim — how a discretionary trader banks a high win rate: take `frac`
+ * off at the near pool, move the stop to breakeven, let the runner go to the
+ * full draw. Anything that reaches the near pool books a win; the runner then
+ * only ever costs the already-banked profit back to breakeven, never a full R.
+ */
+function simulatePartial(
+  sig: { side: Side; entry: number; stopLoss: number; takeProfit: number; nearTarget?: number; drawTarget?: number },
+  m1: Candle[],
+  i: number,
+  limit: number,
+  frac: number,
+): SimResult {
+  const { side, entry, stopLoss } = sig;
+  const risk = Math.abs(entry - stopLoss) || 1e-9;
+  const near = sig.nearTarget ?? sig.takeProfit;
+  const draw = sig.drawTarget ?? sig.takeProfit;
+  const dir = side === 'long' ? 1 : -1;
+  const rAt = (px: number) => (dir * (px - entry)) / risk;
+
+  let banked = 0; // R already realized from the scaled-out portion
+  let remaining = 1;
+  let curStop = stopLoss;
+  let scaled = false;
+
+  for (let j = i + 1; j < limit; j++) {
+    const c = m1[j];
+    const hitStop = side === 'long' ? c.low <= curStop : c.high >= curStop;
+    if (hitStop) {
+      const r = banked + remaining * rAt(curStop);
+      return { exitIdx: j, exit: curStop, rMultiple: r, outcome: r > 1e-9 ? 'win' : 'loss' };
+    }
+    if (!scaled) {
+      const hitNear = side === 'long' ? c.high >= near : c.low <= near;
+      if (hitNear) {
+        banked += frac * rAt(near);
+        remaining -= frac;
+        curStop = entry; // move the runner's stop to breakeven
+        scaled = true;
+        continue; // don't also test the BE stop on the tag bar
+      }
+    } else {
+      const hitDraw = side === 'long' ? c.high >= draw : c.low <= draw;
+      if (hitDraw) {
+        const r = banked + remaining * rAt(draw);
+        return { exitIdx: j, exit: draw, rMultiple: r, outcome: 'win' };
+      }
+    }
+  }
+  const j = limit - 1;
+  const exit = m1[j]?.close ?? entry;
+  const r = banked + remaining * rAt(exit);
+  return { exitIdx: j, exit, rMultiple: r, outcome: 'timeout' };
 }
 
 export interface BtTrade {
@@ -91,48 +181,29 @@ export function backtest(m1: Candle[], opts: BacktestOptions = {}): BacktestResu
       m1: m1.slice(Math.max(0, i - 119), i + 1),
     };
 
-    const sig = generateSignal(snap);
+    const sig = generateSignal(snap, opts.signal);
     if (!sig || sig.confluence < minConf || sig.riskReward < minRR) continue;
 
-    // Simulate forward. Stop is checked before target on the same bar (worst
-    // case for us), so results never flatter the strategy.
-    const { side, entry, stopLoss, takeProfit } = sig;
-    let exitIdx = -1;
-    let exit = 0;
-    let outcome: BtTrade['outcome'] = 'timeout';
     const limit = Math.min(m1.length, i + 1 + maxHold);
-    for (let j = i + 1; j < limit; j++) {
-      const c = m1[j];
-      if (side === 'long') {
-        if (c.low <= stopLoss) { exit = stopLoss; outcome = 'loss'; exitIdx = j; break; }
-        if (c.high >= takeProfit) { exit = takeProfit; outcome = 'win'; exitIdx = j; break; }
-      } else {
-        if (c.high >= stopLoss) { exit = stopLoss; outcome = 'loss'; exitIdx = j; break; }
-        if (c.low <= takeProfit) { exit = takeProfit; outcome = 'win'; exitIdx = j; break; }
-      }
-    }
-    if (exitIdx === -1) {
-      exitIdx = limit - 1;
-      exit = m1[exitIdx]?.close ?? entry;
-    }
+    const res = opts.partial
+      ? simulatePartial(sig, m1, i, limit, opts.scaleFrac ?? 0.5)
+      : simulateSingle(sig, m1, i, limit);
 
-    const risk = Math.abs(entry - stopLoss) || 1e-9;
-    const rMultiple = (side === 'long' ? exit - entry : entry - exit) / risk;
     trades.push({
-      side,
+      side: sig.side,
       entryTime: t,
-      entry,
-      stopLoss,
-      takeProfit,
-      exit,
-      rMultiple: round(rMultiple, 2),
-      outcome,
+      entry: sig.entry,
+      stopLoss: sig.stopLoss,
+      takeProfit: sig.takeProfit,
+      exit: res.exit,
+      rMultiple: round(res.rMultiple, 2),
+      outcome: res.outcome,
       confluence: sig.confluence,
       drawTimeframe: sig.drawTimeframe,
-      barsHeld: exitIdx - i,
+      barsHeld: res.exitIdx - i,
     });
 
-    i = exitIdx; // one position at a time — no overlapping trades
+    i = res.exitIdx; // one position at a time — no overlapping trades
   }
 
   return { stats: summarize(trades), trades };

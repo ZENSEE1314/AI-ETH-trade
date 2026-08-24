@@ -61,7 +61,8 @@ export interface DrawOnLiquidity {
   side: Side; // long after a sell-side sweep, short after a buy-side sweep
   sweptLevel: number; // the resting liquidity that was grabbed (stop hunt)
   sweepExtreme: number; // the wick extreme of the sweep (protective-stop anchor)
-  drawTarget: number; // opposing resting liquidity we're drawn toward (take-profit)
+  drawTarget: number; // furthest opposing resting liquidity (the full draw)
+  nearTarget: number; // nearest opposing resting pool (higher-probability first TP)
   reasons: string[];
 }
 
@@ -95,7 +96,8 @@ export interface Signal {
   // Draw-on-liquidity context, when a sweep drove the setup (for the dashboard).
   sweepSide?: 'buy-side' | 'sell-side'; // which resting pool was already swept
   sweptLevel?: number; // the level that was swept
-  drawTarget?: number; // the opposing unswept pool price is drawn toward
+  drawTarget?: number; // the opposing unswept pool price is drawn toward (full draw)
+  nearTarget?: number; // nearest opposing pool — the scale-out / first target
   drawTimeframe?: '4H' | '15M'; // where the driving draw was read
 }
 

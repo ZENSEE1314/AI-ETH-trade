@@ -79,6 +79,9 @@ async function main() {
   };
   const minConf = Number(flag('--min-conf', String(config.minConfluence)));
   const minRR = Number(flag('--min-rr', String(config.minRiskReward)));
+  const targetMode = (flag('--target', 'draw') as 'near' | 'draw');
+  const stopMode = (flag('--stop', 'swing') as 'swing' | 'sweep');
+  const partial = argv.includes('--partial'); // scale out at near, BE stop, run to draw
 
   let m1: Candle[];
   let source: string;
@@ -114,7 +117,13 @@ async function main() {
     process.exit(1);
   }
 
-  const { stats, trades } = backtest(m1, { symbol: config.symbol, minConfluence: minConf, minRiskReward: minRR });
+  const { stats, trades } = backtest(m1, {
+    symbol: config.symbol,
+    minConfluence: minConf,
+    minRiskReward: minRR,
+    signal: { targetMode, stopMode },
+    partial,
+  });
 
   const from = new Date(m1[0].time).toISOString().slice(0, 16);
   const to = new Date(m1.at(-1)!.time).toISOString().slice(0, 16);
@@ -122,7 +131,7 @@ async function main() {
 
   console.log(`\nBacktest — ${source}`);
   console.log(`  data:        ${m1.length} × 1m  (${from} → ${to} UTC)`);
-  console.log(`  gates:       confluence ≥ ${minConf},  R:R ≥ ${minRR}`);
+  console.log(`  gates:       confluence ≥ ${minConf},  R:R ≥ ${minRR}   target=${targetMode} stop=${stopMode}${partial ? ' partial(scale+BE)' : ''}`);
   console.log('  ─────────────────────────────────────────────');
   console.log(`  trades:      ${stats.trades}   (${stats.wins}W / ${stats.losses}L / ${stats.timeouts} timeout)`);
   console.log(`  reached draw:${pct(stats.hitDrawRate).padStart(7)}   ← headline: hit TP before stop`);

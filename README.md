@@ -100,6 +100,21 @@ drawdown — broken down by whether the 4H or 15M draw drove each trade. The 1m
 JSON accepts either `{time,open,high,low,close,volume}` objects or
 `[time,open,high,low,close,volume]` arrays.
 
+**Win-rate levers** — these mirror how a setup is actually managed and trade win
+rate against R:
+
+| flag | effect |
+|---|---|
+| `--target near` | bank at the nearest opposing pool (higher hit rate) vs `draw` = the furthest pool (bigger R, lower hit rate) |
+| `--stop sweep` | stop behind the sweep extreme (noise-proof) vs `swing` = just past the 1M pivot (tight) |
+| `--partial` | scale out at the near pool, move the stop to breakeven, run the rest to the full draw — the classic high-win-rate management |
+| `--min-conf N` | selectivity: fewer, higher-quality setups |
+
+A high-win-rate preset to try on real data:
+`npm run backtest -- --bybit ETHUSDT 90 --partial --target near --stop sweep --min-conf 75 --min-rr 1`.
+Remember win rate and expectancy trade off on data with no edge — a real
+directional edge is what lets both rise together, so judge these on real klines.
+
 ## Accounts & the Settings page
 
 The dashboard is gated by login. On first visit, `/login.html` lets you create the

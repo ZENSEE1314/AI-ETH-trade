@@ -77,7 +77,8 @@ function evaluateBullish(
     extremeHigh,
   ].filter((v) => v > price);
   if (overhead.length === 0) return null;
-  const drawTarget = Math.max(...overhead);
+  const drawTarget = Math.max(...overhead); // the full draw (furthest pool)
+  const nearTarget = Math.min(...overhead); // nearest resting pool (first TP)
   if (drawTarget <= price) return null;
 
   return {
@@ -85,9 +86,10 @@ function evaluateBullish(
     sweptLevel,
     sweepExtreme: extremeLow,
     drawTarget,
+    nearTarget,
     reasons: [
       `4H swept sell-side @ ${sweptLevel.toFixed(2)} (wick to ${extremeLow.toFixed(2)}) and reclaimed`,
-      `Draw on liquidity: buy-side resting @ ${drawTarget.toFixed(2)} overhead`,
+      `Draw: buy-side resting @ ${nearTarget.toFixed(2)} (near) → ${drawTarget.toFixed(2)} (full) overhead`,
     ],
   };
 }
@@ -118,7 +120,8 @@ function evaluateBearish(
     extremeLow,
   ].filter((v) => v < price);
   if (below.length === 0) return null;
-  const drawTarget = Math.min(...below);
+  const drawTarget = Math.min(...below); // the full draw (furthest pool)
+  const nearTarget = Math.max(...below); // nearest resting pool (first TP)
   if (drawTarget >= price) return null;
 
   return {
@@ -126,9 +129,10 @@ function evaluateBearish(
     sweptLevel,
     sweepExtreme: extremeHigh,
     drawTarget,
+    nearTarget,
     reasons: [
       `4H swept buy-side @ ${sweptLevel.toFixed(2)} (wick to ${extremeHigh.toFixed(2)}) and rejected`,
-      `Draw on liquidity: sell-side resting @ ${drawTarget.toFixed(2)} below`,
+      `Draw: sell-side resting @ ${nearTarget.toFixed(2)} (near) → ${drawTarget.toFixed(2)} (full) below`,
     ],
   };
 }
