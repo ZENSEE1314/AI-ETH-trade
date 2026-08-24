@@ -36,6 +36,9 @@ runs when you supply your own Bitunix API keys *and* set `TRADING_MODE=live`.
   swing (HL long / LH short) to confirm the setup, then to the 1M reaction swing to
   time the trigger with a tight stop — only firing above a confluence threshold
   (`src/strategy/signal.ts`).
+- **EMA 200 confirmation** — the post-sweep entry must not fight the EMA 200: it's
+  read on the 1H (trend) down to the 1M (entry) and both must sit on the trade's
+  side, or freshly reclaim it (`src/strategy/ema.ts`).
 - **Risk core** — position sizing from stop distance, min R:R, per-trade risk cap,
   daily & weekly loss **kill switches**, leverage/liquidation guard.
 - **TradingView webhook** — drive entries from your own Pine alerts.

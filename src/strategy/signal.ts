@@ -19,7 +19,10 @@ import { buildLiquidity, detectSweep } from './liquidity.js';
 import { detectDrawOnLiquidity } from './drawOnLiquidity.js';
 import { premiumDiscount } from './fvg.js';
 import { readVwap } from './vwap.js';
+import { readEma, emaSupports } from './ema.js';
 import { analyzeCandle } from './candles.js';
+
+const EMA_PERIOD = 200;
 
 /** Multi-timeframe input. Any series may be omitted; the engine degrades gracefully. */
 export interface MarketSnapshot {
@@ -31,14 +34,15 @@ export interface MarketSnapshot {
 }
 
 const WEIGHTS = {
-  draw: 25, // primary draw on liquidity (or HTF bias when no draw is present)
+  draw: 24, // primary draw on liquidity (or HTF bias when no draw is present)
   ltfDraw: 8, // 15M draw agrees with the 4H draw (cross-timeframe confirmation)
-  context: 10, // 1H not opposing / aligned
-  structure: 12, // setup-TF structure agrees
-  setup: 14, // 15M reaction swing confirms
-  entry: 17, // 1M reaction swing + candle times the trigger
+  context: 8, // 1H not opposing / aligned
+  structure: 10, // setup-TF structure agrees
+  setup: 12, // 15M reaction swing confirms
+  entry: 16, // 1M reaction swing + candle times the trigger
+  ema: 10, // EMA 200 confirms across 1H → 1M
   liquidity: 6, // discount/premium pricing bonus
-  vwap: 8,
+  vwap: 6,
 } as const;
 
 export function generateSignal(snap: MarketSnapshot): Signal | null {
@@ -161,7 +165,28 @@ export function generateSignal(snap: MarketSnapshot): Signal | null {
     reasons.push(`ENTRY: 1M ${side === 'long' ? 'HL' : 'LH'} @ ${entrySwing.swing.price.toFixed(2)}, awaiting candle confirmation`);
   }
 
-  // 7. VWAP confirmation. -----------------------------------------------------
+  // 7. EMA 200 confirmation (1H trend → 1M entry). ----------------------------
+  // The manual "look at EMA 200 on the 1H down to the 1M to confirm": an entry
+  // must not be fighting the EMA 200 on both the trend frame and the entry
+  // frame. Best entries hold (or reclaim) the right side on both.
+  const emaH1 = readEma(snap.h1.length ? snap.h1 : setup, EMA_PERIOD);
+  const emaM1 = readEma(entryTf, EMA_PERIOD);
+  const h1ok = emaSupports(emaH1, side);
+  const m1ok = emaSupports(emaM1, side);
+  if (!h1ok && !m1ok) {
+    return null; // both the 1H trend and the 1M entry sit against the EMA 200
+  }
+  if (h1ok && m1ok) {
+    confluence += WEIGHTS.ema;
+    reasons.push(
+      `EMA200: 1H ${emaH1.side}/${emaH1.slope} & 1M ${emaM1.side} confirm ${side}`,
+    );
+  } else {
+    confluence += WEIGHTS.ema * 0.5;
+    reasons.push(`EMA200: partial (1H ${h1ok ? 'ok' : 'against'}, 1M ${m1ok ? 'ok' : 'against'})`);
+  }
+
+  // 8. VWAP confirmation. -----------------------------------------------------
   const vwap = readVwap(entryTf);
   const vwapAgrees =
     (side === 'long' && vwap.signal.includes('long')) ||
@@ -171,7 +196,7 @@ export function generateSignal(snap: MarketSnapshot): Signal | null {
     reasons.push(`VWAP: ${vwap.signal}`);
   }
 
-  // 8. EXECUTION — entry off the 1M swing, tight stop under it, draw as target.
+  // 9. EXECUTION — entry off the 1M swing, tight stop under it, draw as target.
   const price = entryTf.at(-1)!.close;
   const entry = price;
 
