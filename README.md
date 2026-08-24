@@ -108,7 +108,10 @@ rate against R:
 | `--target near` | bank at the nearest opposing pool (higher hit rate) vs `draw` = the furthest pool (bigger R, lower hit rate) |
 | `--stop sweep` | stop behind the sweep extreme (noise-proof) vs `swing` = just past the 1M pivot (tight) |
 | `--partial` | scale out at the near pool, move the stop to breakeven, run the rest to the full draw — the classic high-win-rate management |
+| `--be R` | move the stop to breakeven after price trades R in profit |
 | `--min-conf N` | selectivity: fewer, higher-quality setups |
+| `--disable a,b` | ablation — switch indicators off one by one (ema, vwap, structure, ltfdraw, context, liquidity, setup) to see each one's contribution |
+| `--dump file` | write every trade (with MFE/MAE, stop%, reachedNear) to JSON for loss analysis |
 
 A high-win-rate preset to try on real data:
 `npm run backtest -- --bybit ETHUSDT 90 --partial --target near --stop sweep --min-conf 75 --min-rr 1`.

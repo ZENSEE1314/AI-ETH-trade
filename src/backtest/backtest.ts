@@ -20,6 +20,7 @@ export interface BacktestOptions {
   signal?: SignalOptions; // target/stop mode passed through to generateSignal
   partial?: boolean; // scale out at the near pool, move stop to breakeven, run to draw
   scaleFrac?: number; // fraction banked at the near pool (default 0.5)
+  beAtR?: number; // move stop to breakeven once price is this many R in profit (0 = off)
 }
 
 interface SimResult {
@@ -27,31 +28,50 @@ interface SimResult {
   exit: number; // final exit price (last leg)
   rMultiple: number; // net R across all legs
   outcome: 'win' | 'loss' | 'timeout';
+  mfeR: number; // max favorable excursion, in R (how far in profit it ever went)
+  maeR: number; // max adverse excursion, in R (worst heat taken)
+  reachedNear: boolean; // did price tag the near pool before exiting
 }
 
-/** Single-exit sim: stop or take-profit, whichever the bar hits first (stop wins ties). */
+/** Single-exit sim: stop or take-profit, whichever the bar hits first (stop wins ties).
+ *  `beAtR` > 0 moves the stop to breakeven once price trades that many R in profit. */
 function simulateSingle(
-  sig: { side: Side; entry: number; stopLoss: number; takeProfit: number },
+  sig: { side: Side; entry: number; stopLoss: number; takeProfit: number; nearTarget?: number },
   m1: Candle[],
   i: number,
   limit: number,
+  beAtR = 0,
 ): SimResult {
   const { side, entry, stopLoss, takeProfit } = sig;
   const risk = Math.abs(entry - stopLoss) || 1e-9;
+  const near = sig.nearTarget ?? takeProfit;
+  let curStop = stopLoss;
+  let mfe = 0;
+  let mae = 0;
+  let reachedNear = false;
+  const done = (exitIdx: number, exit: number, rMultiple: number, outcome: SimResult['outcome']): SimResult => ({
+    exitIdx, exit, rMultiple, outcome, mfeR: mfe / risk, maeR: mae / risk, reachedNear,
+  });
   for (let j = i + 1; j < limit; j++) {
     const c = m1[j];
+    const fav = side === 'long' ? c.high - entry : entry - c.low;
+    const adv = side === 'long' ? entry - c.low : c.high - entry;
+    if (fav > mfe) mfe = fav;
+    if (adv > mae) mae = adv;
+    if (!reachedNear && (side === 'long' ? c.high >= near : c.low <= near)) reachedNear = true;
     if (side === 'long') {
-      if (c.low <= stopLoss) return { exitIdx: j, exit: stopLoss, rMultiple: (stopLoss - entry) / risk, outcome: 'loss' };
-      if (c.high >= takeProfit) return { exitIdx: j, exit: takeProfit, rMultiple: (takeProfit - entry) / risk, outcome: 'win' };
+      if (c.low <= curStop) return done(j, curStop, (curStop - entry) / risk, curStop >= entry ? 'timeout' : 'loss');
+      if (c.high >= takeProfit) return done(j, takeProfit, (takeProfit - entry) / risk, 'win');
     } else {
-      if (c.high >= stopLoss) return { exitIdx: j, exit: stopLoss, rMultiple: (entry - stopLoss) / risk, outcome: 'loss' };
-      if (c.low <= takeProfit) return { exitIdx: j, exit: takeProfit, rMultiple: (entry - takeProfit) / risk, outcome: 'win' };
+      if (c.high >= curStop) return done(j, curStop, (entry - curStop) / risk, curStop <= entry ? 'timeout' : 'loss');
+      if (c.low <= takeProfit) return done(j, takeProfit, (entry - takeProfit) / risk, 'win');
     }
+    // Arm breakeven once we've seen beAtR of favorable excursion.
+    if (beAtR > 0 && curStop !== entry && mfe >= beAtR * risk) curStop = entry;
   }
   const j = limit - 1;
   const exit = m1[j]?.close ?? entry;
-  const r = (side === 'long' ? exit - entry : entry - exit) / risk;
-  return { exitIdx: j, exit, rMultiple: r, outcome: 'timeout' };
+  return done(j, exit, (side === 'long' ? exit - entry : entry - exit) / risk, 'timeout');
 }
 
 /**
@@ -78,13 +98,22 @@ function simulatePartial(
   let remaining = 1;
   let curStop = stopLoss;
   let scaled = false;
+  let mfe = 0;
+  let mae = 0;
+  const fin = (exitIdx: number, exit: number, rMultiple: number, outcome: SimResult['outcome']): SimResult => ({
+    exitIdx, exit, rMultiple, outcome, mfeR: mfe / risk, maeR: mae / risk, reachedNear: scaled,
+  });
 
   for (let j = i + 1; j < limit; j++) {
     const c = m1[j];
+    const fav = side === 'long' ? c.high - entry : entry - c.low;
+    const adv = side === 'long' ? entry - c.low : c.high - entry;
+    if (fav > mfe) mfe = fav;
+    if (adv > mae) mae = adv;
     const hitStop = side === 'long' ? c.low <= curStop : c.high >= curStop;
     if (hitStop) {
       const r = banked + remaining * rAt(curStop);
-      return { exitIdx: j, exit: curStop, rMultiple: r, outcome: r > 1e-9 ? 'win' : 'loss' };
+      return fin(j, curStop, r, r > 1e-9 ? 'win' : 'loss');
     }
     if (!scaled) {
       const hitNear = side === 'long' ? c.high >= near : c.low <= near;
@@ -97,16 +126,12 @@ function simulatePartial(
       }
     } else {
       const hitDraw = side === 'long' ? c.high >= draw : c.low <= draw;
-      if (hitDraw) {
-        const r = banked + remaining * rAt(draw);
-        return { exitIdx: j, exit: draw, rMultiple: r, outcome: 'win' };
-      }
+      if (hitDraw) return fin(j, draw, banked + remaining * rAt(draw), 'win');
     }
   }
   const j = limit - 1;
   const exit = m1[j]?.close ?? entry;
-  const r = banked + remaining * rAt(exit);
-  return { exitIdx: j, exit, rMultiple: r, outcome: 'timeout' };
+  return fin(j, exit, banked + remaining * rAt(exit), 'timeout');
 }
 
 export interface BtTrade {
@@ -121,6 +146,10 @@ export interface BtTrade {
   confluence: number;
   drawTimeframe?: string;
   barsHeld: number;
+  stopPct: number; // stop distance as % of entry (risk width)
+  mfeR: number; // best favorable excursion in R
+  maeR: number; // worst heat taken in R
+  reachedNear: boolean; // did it tag the near pool before exit
 }
 
 export interface BacktestStats {
@@ -187,7 +216,7 @@ export function backtest(m1: Candle[], opts: BacktestOptions = {}): BacktestResu
     const limit = Math.min(m1.length, i + 1 + maxHold);
     const res = opts.partial
       ? simulatePartial(sig, m1, i, limit, opts.scaleFrac ?? 0.5)
-      : simulateSingle(sig, m1, i, limit);
+      : simulateSingle(sig, m1, i, limit, opts.beAtR ?? 0);
 
     trades.push({
       side: sig.side,
@@ -201,6 +230,10 @@ export function backtest(m1: Candle[], opts: BacktestOptions = {}): BacktestResu
       confluence: sig.confluence,
       drawTimeframe: sig.drawTimeframe,
       barsHeld: res.exitIdx - i,
+      stopPct: round((Math.abs(sig.entry - sig.stopLoss) / sig.entry) * 100, 3),
+      mfeR: round(res.mfeR, 2),
+      maeR: round(res.maeR, 2),
+      reachedNear: res.reachedNear,
     });
 
     i = res.exitIdx; // one position at a time — no overlapping trades

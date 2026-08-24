@@ -9,7 +9,7 @@
 // of [time,open,high,low,close,volume] arrays. Confluence / R:R gates default
 // to the app config; override with --min-conf N and --min-rr N.
 
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import type { Candle } from '../types.js';
 import { config } from '../config.js';
 import { fetchKlines } from '../exchange/bitunix.js';
@@ -82,6 +82,9 @@ async function main() {
   const targetMode = (flag('--target', 'draw') as 'near' | 'draw');
   const stopMode = (flag('--stop', 'swing') as 'swing' | 'sweep');
   const partial = argv.includes('--partial'); // scale out at near, BE stop, run to draw
+  const disable = (flag('--disable', '') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  const beAtR = Number(flag('--be', '0')); // move stop to breakeven after this many R
+  const dumpPath = flag('--dump');
 
   let m1: Candle[];
   let source: string;
@@ -121,9 +124,15 @@ async function main() {
     symbol: config.symbol,
     minConfluence: minConf,
     minRiskReward: minRR,
-    signal: { targetMode, stopMode },
+    signal: { targetMode, stopMode, disable },
     partial,
+    beAtR,
   });
+
+  if (dumpPath) {
+    await writeFile(dumpPath, JSON.stringify(trades));
+    process.stderr.write(`Dumped ${trades.length} trades → ${dumpPath}\n`);
+  }
 
   const from = new Date(m1[0].time).toISOString().slice(0, 16);
   const to = new Date(m1.at(-1)!.time).toISOString().slice(0, 16);

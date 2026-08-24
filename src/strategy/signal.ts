@@ -53,11 +53,16 @@ export interface SignalOptions {
   /** 'swing' stops just past the 1M reaction pivot (tight); 'sweep' stops behind
    *  the sweep extreme so noise can't shake you before the move. Default 'swing'. */
   stopMode?: 'swing' | 'sweep';
+  /** Indicators to switch off for ablation. Names: ltfdraw, context, structure,
+   *  setup, ema, vwap, liquidity. A disabled indicator adds no confluence and
+   *  drops any veto it enforces. */
+  disable?: string[];
 }
 
 export function generateSignal(snap: MarketSnapshot, opts: SignalOptions = {}): Signal | null {
   const targetMode = opts.targetMode ?? 'draw';
   const stopMode = opts.stopMode ?? 'swing';
+  const off = (k: string) => opts.disable?.includes(k) ?? false;
   const reasons: string[] = [];
   let confluence = 0;
 
@@ -81,7 +86,7 @@ export function generateSignal(snap: MarketSnapshot, opts: SignalOptions = {}): 
     reasons.push(`DRAW (${tf}): ${driver.reasons.join('; ')}`);
 
     // Cross-timeframe agreement is a strong tell; disagreement is a caution.
-    if (dol4h && dolLtf) {
+    if (dol4h && dolLtf && !off('ltfdraw')) {
       if (dolLtf.side === dol4h.side) {
         confluence += WEIGHTS.ltfDraw;
         reasons.push(
@@ -101,21 +106,26 @@ export function generateSignal(snap: MarketSnapshot, opts: SignalOptions = {}): 
 
   // 2. CONTEXT (1H) — confirmation must not oppose the direction. --------------
   const ctx = readStructure(snap.h1.length ? snap.h1 : setup);
-  const ctxOpposes =
-    (side === 'long' && ctx.trend === 'bearish') || (side === 'short' && ctx.trend === 'bullish');
-  if (ctxOpposes && !ctx.choch) {
-    return null; // 1H structurally against us with no reversal — stand aside
-  }
-  if ((side === 'long' && ctx.trend === 'bullish') || (side === 'short' && ctx.trend === 'bearish')) {
-    confluence += WEIGHTS.context;
-    reasons.push(`CONTEXT: 1H aligned (${ctx.label})`);
-  } else {
-    reasons.push(`CONTEXT: 1H not opposing (${ctx.label})`);
+  if (!off('context')) {
+    const ctxOpposes =
+      (side === 'long' && ctx.trend === 'bearish') || (side === 'short' && ctx.trend === 'bullish');
+    if (ctxOpposes && !ctx.choch) {
+      return null; // 1H structurally against us with no reversal — stand aside
+    }
+    if ((side === 'long' && ctx.trend === 'bullish') || (side === 'short' && ctx.trend === 'bearish')) {
+      confluence += WEIGHTS.context;
+      reasons.push(`CONTEXT: 1H aligned (${ctx.label})`);
+    } else {
+      reasons.push(`CONTEXT: 1H not opposing (${ctx.label})`);
+    }
   }
 
   // 3. LIQUIDITY / PRICING — sweep in our favor or good discount/premium. ------
   const liq = buildLiquidity(setup);
   const sweep = detectSweep(setup, liq);
+  if (off('liquidity')) {
+    // ablation: skip the pricing bonus entirely
+  } else {
   const favorableSweep =
     (side === 'long' && sweep.swept === 'sell-side') ||
     (side === 'short' && sweep.swept === 'buy-side');
@@ -133,32 +143,37 @@ export function generateSignal(snap: MarketSnapshot, opts: SignalOptions = {}): 
       reasons.push('LIQUIDITY: no favorable sweep / poor pricing');
     }
   }
+  }
 
   // 4. MARKET STRUCTURE (setup TF) — CHoCH/BOS in our direction. ---------------
   const struct = readStructure(setup);
-  const structAligned =
-    (side === 'long' && (struct.trend === 'bullish' || struct.choch)) ||
-    (side === 'short' && (struct.trend === 'bearish' || struct.choch));
-  if (structAligned) {
-    confluence += WEIGHTS.structure;
-    reasons.push(`STRUCTURE: ${struct.label}`);
-  } else {
-    reasons.push(`STRUCTURE: not confirmed (${struct.label})`);
+  if (!off('structure')) {
+    const structAligned =
+      (side === 'long' && (struct.trend === 'bullish' || struct.choch)) ||
+      (side === 'short' && (struct.trend === 'bearish' || struct.choch));
+    if (structAligned) {
+      confluence += WEIGHTS.structure;
+      reasons.push(`STRUCTURE: ${struct.label}`);
+    } else {
+      reasons.push(`STRUCTURE: not confirmed (${struct.label})`);
+    }
   }
 
   // 5. SETUP (15M) — the reaction swing after the sweep (HL long / LH short). --
   const setupSwing = lastReactionSwing(setup, side);
-  if (!setupSwing) return null; // no pivot to build the setup on
-  if (setupSwing.higher) {
-    confluence += WEIGHTS.setup;
-    reasons.push(
-      `SETUP: 15M ${side === 'long' ? 'higher-low' : 'lower-high'} @ ${setupSwing.swing.price.toFixed(2)}`,
-    );
-  } else {
-    confluence += WEIGHTS.setup * 0.5;
-    reasons.push(
-      `SETUP: 15M ${side === 'long' ? 'swing low' : 'swing high'} @ ${setupSwing.swing.price.toFixed(2)} (not yet a ${side === 'long' ? 'HL' : 'LH'})`,
-    );
+  if (!setupSwing) return null; // no pivot to build the setup on (geometry, always required)
+  if (!off('setup')) {
+    if (setupSwing.higher) {
+      confluence += WEIGHTS.setup;
+      reasons.push(
+        `SETUP: 15M ${side === 'long' ? 'higher-low' : 'lower-high'} @ ${setupSwing.swing.price.toFixed(2)}`,
+      );
+    } else {
+      confluence += WEIGHTS.setup * 0.5;
+      reasons.push(
+        `SETUP: 15M ${side === 'long' ? 'swing low' : 'swing high'} @ ${setupSwing.swing.price.toFixed(2)} (not yet a ${side === 'long' ? 'HL' : 'LH'})`,
+      );
+    }
   }
 
   // 6. ENTRY (1M) — the reaction swing that times the trigger + candle confirm.
@@ -181,31 +196,33 @@ export function generateSignal(snap: MarketSnapshot, opts: SignalOptions = {}): 
   // The manual "look at EMA 200 on the 1H down to the 1M to confirm": an entry
   // must not be fighting the EMA 200 on both the trend frame and the entry
   // frame. Best entries hold (or reclaim) the right side on both.
-  const emaH1 = readEma(snap.h1.length ? snap.h1 : setup, EMA_PERIOD);
-  const emaM1 = readEma(entryTf, EMA_PERIOD);
-  const h1ok = emaSupports(emaH1, side);
-  const m1ok = emaSupports(emaM1, side);
-  if (!h1ok && !m1ok) {
-    return null; // both the 1H trend and the 1M entry sit against the EMA 200
-  }
-  if (h1ok && m1ok) {
-    confluence += WEIGHTS.ema;
-    reasons.push(
-      `EMA200: 1H ${emaH1.side}/${emaH1.slope} & 1M ${emaM1.side} confirm ${side}`,
-    );
-  } else {
-    confluence += WEIGHTS.ema * 0.5;
-    reasons.push(`EMA200: partial (1H ${h1ok ? 'ok' : 'against'}, 1M ${m1ok ? 'ok' : 'against'})`);
+  if (!off('ema')) {
+    const emaH1 = readEma(snap.h1.length ? snap.h1 : setup, EMA_PERIOD);
+    const emaM1 = readEma(entryTf, EMA_PERIOD);
+    const h1ok = emaSupports(emaH1, side);
+    const m1ok = emaSupports(emaM1, side);
+    if (!h1ok && !m1ok) {
+      return null; // both the 1H trend and the 1M entry sit against the EMA 200
+    }
+    if (h1ok && m1ok) {
+      confluence += WEIGHTS.ema;
+      reasons.push(`EMA200: 1H ${emaH1.side}/${emaH1.slope} & 1M ${emaM1.side} confirm ${side}`);
+    } else {
+      confluence += WEIGHTS.ema * 0.5;
+      reasons.push(`EMA200: partial (1H ${h1ok ? 'ok' : 'against'}, 1M ${m1ok ? 'ok' : 'against'})`);
+    }
   }
 
   // 8. VWAP confirmation. -----------------------------------------------------
-  const vwap = readVwap(entryTf);
-  const vwapAgrees =
-    (side === 'long' && vwap.signal.includes('long')) ||
-    (side === 'short' && vwap.signal.includes('short'));
-  if (vwapAgrees) {
-    confluence += WEIGHTS.vwap;
-    reasons.push(`VWAP: ${vwap.signal}`);
+  if (!off('vwap')) {
+    const vwap = readVwap(entryTf);
+    const vwapAgrees =
+      (side === 'long' && vwap.signal.includes('long')) ||
+      (side === 'short' && vwap.signal.includes('short'));
+    if (vwapAgrees) {
+      confluence += WEIGHTS.vwap;
+      reasons.push(`VWAP: ${vwap.signal}`);
+    }
   }
 
   // 9. EXECUTION — entry off the 1M swing, tight stop under it, draw as target.
