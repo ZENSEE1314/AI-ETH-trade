@@ -81,9 +81,16 @@ before the stop, on a 1-minute history the tool resamples up to 15M/1H/4H:
 
 ```bash
 npm run backtest -- data/eth-1m.json        # replay a saved 1m history (JSON)
+npm run backtest -- --bybit ETHUSDT 90      # pull 90 days of real 1m from Bybit
 npm run backtest -- --fetch ETHUSDT 1000    # pull recent 1m from Bitunix
 npm run backtest -- --demo                  # synthetic smoke test
 ```
+
+`--bybit <SYMBOL> <days>` pages Bybit's public v5 klines (linear perps) back over
+the window — run it where `api.bybit.com` is reachable, since a locked-down
+network may block the exchange host. It handles 90 days (~130k 1m candles) in
+seconds; the higher timeframes are rebuilt from a bounded tail so runtime stays
+flat in history length.
 
 It walks the history minute by minute with **no lookahead** (higher timeframes
 are rebuilt only from candles seen so far), applies the same confluence / R:R

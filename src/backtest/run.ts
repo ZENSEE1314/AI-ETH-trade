@@ -1,6 +1,7 @@
 // Backtest runner.
 //
 //   npm run backtest -- data/eth-1m.json      # replay a saved 1m history
+//   npm run backtest -- --bybit ETHUSDT 90    # pull 90d of 1m from Bybit (real)
 //   npm run backtest -- --fetch ETHUSDT 1000  # pull recent 1m from Bitunix
 //   npm run backtest -- --demo                # synthetic smoke test
 //
@@ -12,6 +13,7 @@ import { readFile } from 'node:fs/promises';
 import type { Candle } from '../types.js';
 import { config } from '../config.js';
 import { fetchKlines } from '../exchange/bitunix.js';
+import { fetchBybitKlines } from './fetchBybit.js';
 import { backtest, type BtTrade } from './backtest.js';
 
 async function loadFromFile(path: string): Promise<Candle[]> {
@@ -83,6 +85,13 @@ async function main() {
   if (argv.includes('--demo')) {
     m1 = demoSeries();
     source = 'synthetic demo';
+  } else if (argv.includes('--bybit')) {
+    const i = argv.indexOf('--bybit');
+    const symbol = argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : config.symbol;
+    const days = Number(argv[i + 2] ?? 90);
+    process.stderr.write(`Fetching ${days}d of ${symbol} 1m from Bybit…\n`);
+    m1 = await fetchBybitKlines(symbol, days);
+    source = `Bybit ${symbol} 1m×${m1.length} (${days}d)`;
   } else if (argv.includes('--fetch')) {
     const symbol = flag('--fetch', config.symbol) ?? config.symbol;
     const limit = Number(argv[argv.indexOf('--fetch') + 2] ?? 1000);
@@ -91,7 +100,9 @@ async function main() {
   } else {
     const path = argv.find((a) => !a.startsWith('--'));
     if (!path) {
-      console.error('Usage: npm run backtest -- <1m.json> | --fetch <SYMBOL> <limit> | --demo');
+      console.error(
+        'Usage: npm run backtest -- <1m.json> | --bybit <SYMBOL> <days> | --fetch <SYMBOL> <limit> | --demo',
+      );
       process.exit(1);
     }
     m1 = await loadFromFile(path);

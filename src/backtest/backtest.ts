@@ -71,9 +71,12 @@ export function backtest(m1: Candle[], opts: BacktestOptions = {}): BacktestResu
 
     // Rebuild the higher-timeframe view only when a new 15m bar opens — cheap,
     // and it never leaks a forming bar's future into the current decision.
+    // Buckets are UTC-aligned, so a bounded tail yields the same recent HTF
+    // candles the strategy uses (120×4H = 28,800 1m) while keeping this O(1) in
+    // history length — the difference between seconds and minutes on 90d of 1m.
     const b15 = Math.floor(t / (15 * 60_000));
     if (b15 !== lastBucket15) {
-      const hist = m1.slice(0, i + 1);
+      const hist = m1.slice(Math.max(0, i + 1 - 30_000), i + 1);
       m15 = resample(hist, 15);
       h1 = resample(hist, 60);
       h4 = resample(hist, 240);
