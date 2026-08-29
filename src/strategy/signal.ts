@@ -20,6 +20,7 @@ import { detectDrawOnLiquidity } from './drawOnLiquidity.js';
 import { premiumDiscount } from './fvg.js';
 import { readVwap } from './vwap.js';
 import { liquiditySweepConfirms } from './liquidityMap.js';
+import { readTrendChannel } from './trendChannel.js';
 import { readEma, emaSupports } from './ema.js';
 import { analyzeCandle } from './candles.js';
 
@@ -62,9 +63,15 @@ export interface SignalOptions {
    *  if price is within this % of the nearest opposing 1H pool AND has just swept
    *  it. 0 (default) leaves the gate off. */
   liqProximityPct?: number;
+  /** Trend-channel mode (the red/green range envelope): only trade with the
+   *  channel's slope, and target the leading band it's travelling toward instead
+   *  of the fixed far draw. Off by default. */
+  channel?: boolean;
 }
 
 const LIQ_GATE_BONUS = 6; // confluence credit when the sweep gate confirms
+const CHANNEL_BONUS = 8; // confluence credit when the trend channel aligns
+const CHANNEL_LEN = 50; // bars in the regression channel (setup timeframe)
 
 export function generateSignal(snap: MarketSnapshot, opts: SignalOptions = {}): Signal | null {
   const targetMode = opts.targetMode ?? 'draw';
@@ -120,6 +127,19 @@ export function generateSignal(snap: MarketSnapshot, opts: SignalOptions = {}): 
     if (!conf.ok) return null;
     confluence += LIQ_GATE_BONUS;
     reasons.push(conf.reason);
+  }
+
+  // 1c. TREND CHANNEL (the red/green envelope) — only trade with the slope. ----
+  const chan = opts.channel ? readTrendChannel(setup, CHANNEL_LEN) : null;
+  if (chan && chan.direction !== 'flat') {
+    const opposes =
+      (side === 'long' && chan.direction === 'down') ||
+      (side === 'short' && chan.direction === 'up');
+    if (opposes) return null; // channel slopes against us — stand aside
+    confluence += CHANNEL_BONUS;
+    reasons.push(
+      `CHANNEL: ${chan.direction} (slope ${chan.slopePct.toFixed(3)}%/bar) — mid ${chan.mid.toFixed(2)}, band [${chan.lower.toFixed(2)}, ${chan.upper.toFixed(2)}]`,
+    );
   }
 
   // 2. CONTEXT (1H) — confirmation must not oppose the direction. --------------
@@ -250,7 +270,23 @@ export function generateSignal(snap: MarketSnapshot, opts: SignalOptions = {}): 
   const sweepAnchor = stopMode === 'sweep' ? driver?.sweepExtreme : undefined;
   const stopLoss = computeStop(side, entry, entrySwing.swing.price, setup, sweepAnchor);
   const drawTP = driver ? (targetMode === 'near' ? driver.nearTarget : driver.drawTarget) : null;
-  const takeProfit = drawTP ?? computeTarget(side, entry, liq, struct);
+
+  // Dynamic target: in channel mode, aim at the leading band the trend is
+  // travelling toward (upper for a long, lower for a short) and scale at the mid
+  // — a nearer, in-trend target than the fixed far draw, so trend legs get banked
+  // instead of timing out. Falls back to the draw if the band isn't in profit.
+  let takeProfit = drawTP ?? computeTarget(side, entry, liq, struct);
+  let channelNear: number | undefined;
+  if (chan) {
+    const band = side === 'long' ? chan.upper : chan.lower;
+    const bandInProfit = side === 'long' ? band > entry : band < entry;
+    if (bandInProfit) {
+      takeProfit = band;
+      const midInProfit = side === 'long' ? chan.mid > entry : chan.mid < entry;
+      channelNear = midInProfit ? chan.mid : undefined;
+    }
+  }
+
   const risk = Math.abs(entry - stopLoss);
   const reward = Math.abs(takeProfit - entry);
   if (risk <= 0 || reward <= 0) return null;
@@ -276,6 +312,9 @@ export function generateSignal(snap: MarketSnapshot, opts: SignalOptions = {}): 
       nearTarget: round(driver.nearTarget),
       drawTimeframe: dol4h ? '4H' : '15M',
     }),
+    // Channel mode scales at the mid and targets the leading band; this near
+    // overrides the draw's near so partial/breakeven management uses the mid.
+    ...(channelNear != null && { nearTarget: round(channelNear) }),
   };
 }
 

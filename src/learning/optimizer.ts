@@ -33,6 +33,7 @@ export interface SearchGrid {
   minConfluence: number[];
   minRiskReward: number[];
   liqProximityPct: number[]; // hourly-liquidity sweep gate (0 = off)
+  channel: boolean[]; // trend-channel filter + leading-band target
 }
 
 /** Default grid — starts biased toward the user's profile (draw target, both stops). */
@@ -43,7 +44,8 @@ export function defaultGrid(profile: TradeProfile): SearchGrid {
     exit: ['tp', 'partial', 'be'],
     minConfluence: [60, 75],
     minRiskReward: profile.medianR >= 3 ? [1.5, 2] : [1, 1.5],
-    liqProximityPct: [0, 0.6], // off vs. "sit at the swept pool" — the manual read
+    liqProximityPct: [0], // real-data testing showed the sweep gate adds no edge
+    channel: [false, true], // trade the trend channel (filter + band target) or not
   };
 }
 
@@ -71,23 +73,26 @@ export function optimize(m1: Candle[], profile: TradeProfile, grid = defaultGrid
         for (const minConfluence of grid.minConfluence) {
           for (const minRiskReward of grid.minRiskReward) {
             for (const liqProximityPct of grid.liqProximityPct) {
-              const { partial, beAtR } = EXIT[exit];
-              const { stats } = backtest(m1, {
-                minConfluence,
-                minRiskReward,
-                signal: { targetMode, stopMode, liqProximityPct },
-                partial,
-                beAtR,
-              });
-              const params: LearnedParams = {
-                signal: { targetMode, stopMode },
-                minConfluence,
-                minRiskReward,
-                liqProximityPct,
-                partial,
-                beAtR,
-              };
-              out.push({ params, stats, fitness: fitness(stats, profile) });
+              for (const channel of grid.channel) {
+                const { partial, beAtR } = EXIT[exit];
+                const { stats } = backtest(m1, {
+                  minConfluence,
+                  minRiskReward,
+                  signal: { targetMode, stopMode, liqProximityPct, channel },
+                  partial,
+                  beAtR,
+                });
+                const params: LearnedParams = {
+                  signal: { targetMode, stopMode },
+                  minConfluence,
+                  minRiskReward,
+                  liqProximityPct,
+                  channel,
+                  partial,
+                  beAtR,
+                };
+                out.push({ params, stats, fitness: fitness(stats, profile) });
+              }
             }
           }
         }
