@@ -158,8 +158,8 @@ export interface BacktestStats {
   wins: number;
   losses: number;
   timeouts: number;
-  winRate: number; // wins / trades
-  hitDrawRate: number; // reached the draw (TP) / trades — the headline metric
+  winRate: number; // profitable trades (net R > 0) / trades — the real win rate
+  hitDrawRate: number; // reached the full draw (TP) / trades — a stricter metric
   avgR: number; // expectancy in R
   totalR: number;
   profitFactor: number; // gross win R / gross loss R
@@ -256,6 +256,7 @@ function summarize(trades: BtTrade[]): BacktestStats {
   const wins = trades.filter((t) => t.outcome === 'win').length;
   const losses = trades.filter((t) => t.outcome === 'loss').length;
   const timeouts = trades.filter((t) => t.outcome === 'timeout').length;
+  const profitable = trades.filter((t) => t.rMultiple > 0).length; // real wins by P&L
   const totalR = trades.reduce((s, t) => s + t.rMultiple, 0);
   const grossWin = trades.filter((t) => t.rMultiple > 0).reduce((s, t) => s + t.rMultiple, 0);
   const grossLoss = -trades.filter((t) => t.rMultiple < 0).reduce((s, t) => s + t.rMultiple, 0);
@@ -274,7 +275,7 @@ function summarize(trades: BtTrade[]): BacktestStats {
     wins,
     losses,
     timeouts,
-    winRate: n ? round(wins / n, 4) : 0,
+    winRate: n ? round(profitable / n, 4) : 0,
     hitDrawRate: n ? round(wins / n, 4) : 0,
     avgR: n ? round(totalR / n, 3) : 0,
     totalR: round(totalR, 2),

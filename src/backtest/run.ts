@@ -138,8 +138,8 @@ async function main() {
   console.log(`  gates:       confluence ≥ ${minConf},  R:R ≥ ${minRR}   target=${targetMode} stop=${stopMode}${partial ? ' partial(scale+BE)' : ''}${liqProximityPct > 0 ? ` liq-prox=${liqProximityPct}%` : ''}${channelFilter ? ' chan-filter' : ''}${channelTarget ? ' chan-target' : ''}${chain ? ' CHAIN(1H→15M→1M+VWAP)' : ''}${costBps > 0 ? ` cost=${costBps}bps/side` : ' (frictionless)'}`);
   console.log('  ─────────────────────────────────────────────');
   console.log(`  trades:      ${stats.trades}   (${stats.wins}W / ${stats.losses}L / ${stats.timeouts} timeout)`);
-  console.log(`  reached draw:${pct(stats.hitDrawRate).padStart(7)}   ← headline: hit TP before stop`);
-  console.log(`  win rate:    ${pct(stats.winRate).padStart(7)}`);
+  console.log(`  win rate:    ${pct(stats.winRate).padStart(7)}   ← trades closed net-positive (real WR)`);
+  console.log(`  reached draw:${pct(stats.hitDrawRate).padStart(7)}   (hit the FULL target — stricter)`);
   console.log(`  expectancy:  ${stats.avgR.toFixed(3)} R / trade`);
   console.log(`  total:       ${stats.totalR.toFixed(2)} R`);
   console.log(`  profit factor:${String(stats.profitFactor).padStart(6)}`);
