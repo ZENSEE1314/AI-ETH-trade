@@ -42,8 +42,10 @@ export function defaultGrid(profile: TradeProfile): SearchGrid {
     targetMode: profile.targetStyle === 'near' ? ['near', 'draw'] : ['draw', 'near'],
     stopMode: ['swing', 'sweep'],
     exit: ['tp', 'partial', 'be'],
-    minConfluence: [60, 75],
-    minRiskReward: profile.medianR >= 3 ? [1.5, 2] : [1, 1.5],
+    // Fees reward fewer, higher-quality, bigger-R trades — the opposite of
+    // scalping. Bias selectivity high and R:R toward the user's journal (avg ~6R).
+    minConfluence: [75, 85],
+    minRiskReward: profile.medianR >= 3 ? [2, 3, 4] : [1.5, 2, 3],
     liqProximityPct: [0], // real-data testing showed the sweep gate adds no edge
     // Search the channel FILTER only; the band TARGET tested worse on real data
     // (it caps the fat-tail trend legs the draw/sweep edge depends on).
