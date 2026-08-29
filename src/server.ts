@@ -10,7 +10,7 @@ import { register, authenticate, AuthError, userCount } from './auth/users.js';
 import { requireAuth, currentUser, setSessionCookie, clearSessionCookie } from './auth/middleware.js';
 import { logger } from './logger.js';
 import { engine } from './engine/tradeEngine.js';
-import { parseTradingViewAlert, WebhookError } from './webhooks/tradingview.js';
+import { parseTradingViewAlert, parseTradingViewCandles, WebhookError } from './webhooks/tradingview.js';
 import { CURRICULUM, PHILOSOPHY } from './knowledge/curriculum.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -115,6 +115,23 @@ app.post('/webhook/tradingview', (req, res) => {
   } catch (err) {
     const status = err instanceof WebhookError ? 400 : 500;
     logger.warn(`Webhook rejected: ${(err as Error).message}`);
+    res.status(status).json({ ok: false, error: (err as Error).message });
+  }
+});
+
+// --- TradingView bar-close feed → live 1m candles -------------------------
+// A "Once Per Bar Close" alert pushing OHLC lets the engine run off your
+// TradingView data with no exchange API. Once ~250 bars have accrued the feed
+// drives analysis; before that it just accumulates.
+app.post('/webhook/tradingview/candle', (req, res) => {
+  try {
+    const raw = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body;
+    const bars = parseTradingViewCandles(raw);
+    const { accepted, total, ready } = engine.ingestCandles(bars);
+    res.json({ ok: true, accepted, total, ready });
+  } catch (err) {
+    const status = err instanceof WebhookError ? 400 : 500;
+    logger.warn(`Candle webhook rejected: ${(err as Error).message}`);
     res.status(status).json({ ok: false, error: (err as Error).message });
   }
 });

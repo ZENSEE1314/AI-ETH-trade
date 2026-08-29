@@ -1,35 +1,23 @@
 // Backtest runner.
 //
-//   npm run backtest -- data/eth-1m.json      # replay a saved 1m history
+//   npm run backtest -- data/eth-1m.json      # replay a saved 1m history (JSON)
+//   npm run backtest -- data/eth-1m.csv       # …or a TradingView chart-data CSV
 //   npm run backtest -- --bybit ETHUSDT 90    # pull 90d of 1m from Bybit (real)
 //   npm run backtest -- --fetch ETHUSDT 1000  # pull recent 1m from Bitunix
 //   npm run backtest -- --demo                # synthetic smoke test
 //
-// The 1m JSON may be an array of {time,open,high,low,close,volume} objects or
-// of [time,open,high,low,close,volume] arrays. Confluence / R:R gates default
-// to the app config; override with --min-conf N and --min-rr N.
+// The file may be JSON ({time,open,high,low,close,volume} objects or
+// [time,…] arrays) or CSV (incl. a raw TradingView export); see loadCandles.ts.
+// Confluence / R:R gates default to the app config; override with --min-conf /
+// --min-rr, and --liq-prox N gates on a fresh hourly-liquidity sweep.
 
-import { readFile, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import type { Candle } from '../types.js';
 import { config } from '../config.js';
 import { fetchKlines } from '../exchange/bitunix.js';
 import { fetchBybitKlines } from './fetchBybit.js';
+import { loadCandles } from './loadCandles.js';
 import { backtest, type BtTrade } from './backtest.js';
-
-async function loadFromFile(path: string): Promise<Candle[]> {
-  const raw = JSON.parse(await readFile(path, 'utf8'));
-  const rows: any[] = Array.isArray(raw) ? raw : raw.data ?? raw.candles ?? [];
-  const out = rows.map((r): Candle | null => {
-    const [time, open, high, low, close, volume] = Array.isArray(r)
-      ? r
-      : [r.time ?? r.t ?? r.ts, r.open ?? r.o, r.high ?? r.h, r.low ?? r.l, r.close ?? r.c, r.volume ?? r.v ?? 0];
-    const t = Number(time);
-    const c = { time: t < 1e12 ? t * 1000 : t, open: +open, high: +high, low: +low, close: +close, volume: +volume || 0 };
-    return [c.open, c.high, c.low, c.close, c.time].every(Number.isFinite) ? c : null;
-  }).filter((c): c is Candle => c !== null);
-  out.sort((a, b) => a.time - b.time);
-  return out;
-}
 
 /**
  * A synthetic 1m series with repeated sweep-and-reclaim-into-draw cycles, plus
@@ -108,11 +96,11 @@ async function main() {
     const path = argv.find((a) => !a.startsWith('--'));
     if (!path) {
       console.error(
-        'Usage: npm run backtest -- <1m.json> | --bybit <SYMBOL> <days> | --fetch <SYMBOL> <limit> | --demo',
+        'Usage: npm run backtest -- <1m.json|.csv> | --bybit <SYMBOL> <days> | --fetch <SYMBOL> <limit> | --demo',
       );
       process.exit(1);
     }
-    m1 = await loadFromFile(path);
+    m1 = await loadCandles(path);
     source = path;
   }
 

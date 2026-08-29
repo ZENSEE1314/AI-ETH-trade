@@ -17,10 +17,12 @@ import { buildLiquidityMap, type LiquidityMap } from '../strategy/liquidityMap.j
 const RELEARN_EVERY = 10; // closed trades between online relearn passes
 const MIN_RELEARN_BUFFER = 2000; // 1m candles needed before a relearn is trusted
 const KLINE_BUFFER_CAP = 60_000; // ~41 days of 1m held for online learning
+const LIVE_FEED_MIN = 250; // 1m bars from the live feed before it drives the engine
+const LIVE_FEED_CAP = 60_000; // bound the live 1m tail we keep in memory
 import { assessRisk, type RiskContext } from '../risk/riskManager.js';
 import { openPaperPosition, evaluatePosition, closePosition } from '../exchange/paperBroker.js';
 import { placeLiveOrder } from '../exchange/bitunix.js';
-import { loadSnapshot, lastPrice } from './marketData.js';
+import { loadSnapshot, snapshotFromM1, lastPrice } from './marketData.js';
 import { Journal } from './journal.js';
 
 export interface EngineState {
@@ -64,6 +66,10 @@ export class TradeEngine extends EventEmitter {
   private klineBuffer: Candle[] = []; // accumulated 1m history for online relearn
   private lastKlineTime = 0;
   private closedSinceRelearn = 0;
+  // Live 1m bars pushed in from a TradingView bar-close webhook (or any 1m
+  // source). Once it has enough history it drives the engine instead of the
+  // exchange fetch — the higher timeframes are resampled from it.
+  private liveM1: Candle[] = [];
 
   /** Base equity comes from settings so it reflects UI changes on restart. */
   get startEquity(): number {
@@ -140,7 +146,13 @@ export class TradeEngine extends EventEmitter {
   /** One analysis + management cycle. */
   async cycle(): Promise<void> {
     try {
-      const snap = await loadSnapshot(config.symbol);
+      // Prefer the live TradingView feed once it has enough history; otherwise
+      // fall back to the exchange fetch. This lets the engine run purely off a
+      // bar-close webhook where the exchange API isn't reachable.
+      const snap =
+        this.liveM1.length >= LIVE_FEED_MIN
+          ? snapshotFromM1(config.symbol, this.liveM1)
+          : await loadSnapshot(config.symbol);
       this.lastPx = lastPrice(snap);
       this.lastBias = buildBias(snap.h4.length ? snap.h4 : snap.h1).direction;
       this.accumulateKlines(snap.m1);
@@ -173,6 +185,30 @@ export class TradeEngine extends EventEmitter {
     if (this.klineBuffer.length > KLINE_BUFFER_CAP) {
       this.klineBuffer = this.klineBuffer.slice(-KLINE_BUFFER_CAP);
     }
+  }
+
+  /**
+   * Ingest one or more live 1m bars from the TradingView bar-close webhook.
+   * Upserts by bar time (a re-sent in-progress bar replaces the last one), keeps
+   * the series sorted and bounded, and reports how many bars are held so far.
+   * When the same cycle interval fires it will pick these up automatically.
+   */
+  ingestCandles(bars: Candle[]): { accepted: number; total: number; ready: boolean } {
+    let accepted = 0;
+    for (const bar of bars) {
+      if (![bar.open, bar.high, bar.low, bar.close, bar.time].every(Number.isFinite)) continue;
+      const last = this.liveM1.at(-1);
+      if (last && bar.time === last.time) {
+        this.liveM1[this.liveM1.length - 1] = bar; // same bar re-sent → replace
+      } else if (!last || bar.time > last.time) {
+        this.liveM1.push(bar); // new, later bar
+      } else {
+        continue; // out-of-order / stale bar — ignore
+      }
+      accepted++;
+    }
+    if (this.liveM1.length > LIVE_FEED_CAP) this.liveM1 = this.liveM1.slice(-LIVE_FEED_CAP);
+    return { accepted, total: this.liveM1.length, ready: this.liveM1.length >= LIVE_FEED_MIN };
   }
 
   /** Online self-learning: after enough closed trades, retune on the buffer. */

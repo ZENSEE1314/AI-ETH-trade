@@ -81,10 +81,19 @@ before the stop, on a 1-minute history the tool resamples up to 15M/1H/4H:
 
 ```bash
 npm run backtest -- data/eth-1m.json        # replay a saved 1m history (JSON)
+npm run backtest -- data/eth-1m.csv         # …or a TradingView chart-data CSV export
 npm run backtest -- --bybit ETHUSDT 90      # pull 90 days of real 1m from Bybit
 npm run backtest -- --fetch ETHUSDT 1000    # pull recent 1m from Bitunix
 npm run backtest -- --demo                  # synthetic smoke test
 ```
+
+**Feeding it your TradingView data:** open the ETH 1m chart, use *Export chart
+data…* (paid TV plans) to download the CSV, and point the backtester (or the
+learner) straight at it — `npm run backtest -- eth-1m.csv`,
+`npm run learn -- eth-1m.csv`. The loader (`src/backtest/loadCandles.ts`) reads
+both JSON and CSV and accepts either a unix epoch or an ISO-8601 datetime in the
+time column, so a raw TradingView export works as-is. This is the way to
+validate on *your* data when the exchange APIs aren't reachable.
 
 `--bybit <SYMBOL> <days>` pages Bybit's public v5 klines (linear perps) back over
 the window — run it where `api.bybit.com` is reachable, since a locked-down
@@ -232,6 +241,40 @@ with this JSON message:
 Every inbound alert still passes through the full risk core before any order.
 The bot **also** analyses Bitunix klines itself on an interval, so it works with
 or without TradingView.
+
+### Drive the engine from TradingView candles (no exchange API)
+
+If the exchange isn't reachable, TradingView can *be* the market-data feed. Add a
+second alert on the same symbol set to **Once Per Bar Close** pointing at:
+
+```
+POST https://<your-app>/webhook/tradingview/candle
+```
+
+with the bar's OHLC (Pine placeholders fill it in):
+
+```json
+{
+  "secret": "<WEBHOOK_SECRET>",
+  "symbol": "ETHUSDT",
+  "time": "{{time}}",
+  "open": {{open}}, "high": {{high}}, "low": {{low}}, "close": {{close}},
+  "volume": {{volume}}
+}
+```
+
+Each closed 1m bar is appended to a live series (`ingestCandles`); once ~250
+bars have accrued the engine **resamples 15M/1H/4H from it and analyses off your
+TradingView data instead of the exchange fetch** — same signal, risk and
+learning path, no Bitunix/Bybit call. `time` may be an ISO-8601 string or a unix
+epoch; a re-sent in-progress bar replaces the last one, and a batch
+(`{"bars":[…]}`) is accepted for backfills. It only accumulates going forward, so
+it's for live/forward paper trading — use a CSV export (above) for history.
+
+> **Note:** this is a one-way inbound webhook, not a link into your TradingView
+> account. TradingView has no historical-data API to pull from, so a *backtest*
+> over past months must come from a CSV export or an exchange fetch — the live
+> feed can only gather bars from the moment you switch the alert on.
 
 ## Deploy to Railway
 

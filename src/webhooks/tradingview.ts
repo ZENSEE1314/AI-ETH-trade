@@ -13,10 +13,72 @@
 // }
 
 import { randomUUID } from 'node:crypto';
-import type { Signal, Side } from '../types.js';
+import type { Signal, Side, Candle } from '../types.js';
 import { config } from '../config.js';
 
 export class WebhookError extends Error {}
+
+function checkSecret(b: Record<string, unknown>): void {
+  if (config.webhookSecret && b.secret !== config.webhookSecret) {
+    throw new WebhookError('Invalid webhook secret.');
+  }
+}
+
+/**
+ * Parse a bar-close feed from TradingView into 1m Candles. Configure a
+ * TradingView alert on "Once Per Bar Close" with this JSON message (Pine's
+ * placeholders fill it in):
+ * {
+ *   "secret": "<WEBHOOK_SECRET>",
+ *   "symbol": "ETHUSDT",
+ *   "time": "{{time}}",        // ISO-8601 or unix epoch
+ *   "open": {{open}}, "high": {{high}}, "low": {{low}}, "close": {{close}},
+ *   "volume": {{volume}}
+ * }
+ * A batch (an array, or {bars:[…]}) is also accepted for backfills.
+ */
+export function parseTradingViewCandles(body: unknown): Candle[] {
+  if (typeof body !== 'object' || body === null) throw new WebhookError('Body must be JSON.');
+  const top = body as Record<string, unknown>;
+  const list: unknown[] = Array.isArray(body)
+    ? (body as unknown[])
+    : Array.isArray(top.bars)
+      ? (top.bars as unknown[])
+      : [body];
+
+  // Secret is checked on the envelope (batch) or on each bar (single object).
+  if (!Array.isArray(body) && !Array.isArray(top.bars)) checkSecret(top);
+  else if (Array.isArray(top.bars)) checkSecret(top);
+
+  const out: Candle[] = [];
+  for (const item of list) {
+    if (typeof item !== 'object' || item === null) continue;
+    const b = item as Record<string, unknown>;
+    const time = parseTime(b.time ?? b.t ?? b.ts ?? b.timestamp);
+    const open = Number(b.open ?? b.o);
+    const high = Number(b.high ?? b.h);
+    const low = Number(b.low ?? b.l);
+    const close = Number(b.close ?? b.c);
+    const volume = Number(b.volume ?? b.v ?? 0) || 0;
+    if (![open, high, low, close, time].every(Number.isFinite)) {
+      throw new WebhookError('Each bar needs finite time/open/high/low/close.');
+    }
+    out.push({ time, open, high, low, close, volume });
+  }
+  if (!out.length) throw new WebhookError('No bars in payload.');
+  return out;
+}
+
+/** Time cell → epoch-ms. Accepts a unix number (s or ms) or an ISO string. */
+function parseTime(raw: unknown): number {
+  if (typeof raw === 'number') return raw < 1e12 ? raw * 1000 : raw;
+  const s = String(raw ?? '').trim();
+  if (!s) return NaN;
+  const n = Number(s);
+  if (Number.isFinite(n)) return n < 1e12 ? n * 1000 : n;
+  const d = Date.parse(s);
+  return Number.isFinite(d) ? d : NaN;
+}
 
 export function parseTradingViewAlert(body: unknown): Signal {
   if (typeof body !== 'object' || body === null) throw new WebhookError('Body must be JSON.');

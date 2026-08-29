@@ -1,34 +1,20 @@
-// `npm run learn -- <1m.json | --bybit ETHUSDT 90 | --demo>`
+// `npm run learn -- <1m.json|.csv | --bybit ETHUSDT 90 | --demo>`
+// (a 1m file may be JSON or a TradingView CSV export — see loadCandles.ts)
 //
 // Teaches the engine to trade like the reference journal: it builds the user's
 // profile from src/learning/history.ts, searches the strategy's parameters on
 // the given 1m data, and writes the best config to learned.json. The paper
 // engine then trades that way. Run it again on fresh data to learn again.
 
-import { readFile, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import type { Candle } from '../types.js';
 import { config } from '../config.js';
 import { fetchBybitKlines } from '../backtest/fetchBybit.js';
+import { loadCandles } from '../backtest/loadCandles.js';
 import { USER_TRADES } from './history.js';
 import { buildProfile } from './profile.js';
 import { optimize } from './optimizer.js';
 import { saveLearned, type LearnedParams } from './store.js';
-
-async function loadFromFile(path: string): Promise<Candle[]> {
-  const raw = JSON.parse(await readFile(path, 'utf8'));
-  const rows: any[] = Array.isArray(raw) ? raw : raw.data ?? raw.candles ?? [];
-  return rows
-    .map((r): Candle | null => {
-      const [t, o, h, l, c, v] = Array.isArray(r)
-        ? r
-        : [r.time ?? r.t ?? r.ts, r.open ?? r.o, r.high ?? r.h, r.low ?? r.l, r.close ?? r.c, r.volume ?? r.v ?? 0];
-      const time = Number(t);
-      const cd = { time: time < 1e12 ? time * 1000 : time, open: +o, high: +h, low: +l, close: +c, volume: +v || 0 };
-      return [cd.open, cd.high, cd.low, cd.close, cd.time].every(Number.isFinite) ? cd : null;
-    })
-    .filter((c): c is Candle => c !== null)
-    .sort((a, b) => a.time - b.time);
-}
 
 /** A small GBM demo series so the pipeline runs with no data or network. */
 function demoSeries(minutes = 20000): Candle[] {
@@ -74,10 +60,10 @@ async function main() {
   } else {
     const path = argv.find((a) => !a.startsWith('--'));
     if (!path) {
-      console.error('Usage: npm run learn -- <1m.json> | --bybit <SYMBOL> <days> | --demo  [--window N]');
+      console.error('Usage: npm run learn -- <1m.json|.csv> | --bybit <SYMBOL> <days> | --demo  [--window N]');
       process.exit(1);
     }
-    m1 = await loadFromFile(path);
+    m1 = await loadCandles(path);
     source = path;
   }
   if (m1.length > window) m1 = m1.slice(-window);
