@@ -73,7 +73,9 @@ async function main() {
   const disable = (flag('--disable', '') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   const beAtR = Number(flag('--be', '0')); // move stop to breakeven after this many R
   const liqProximityPct = Number(flag('--liq-prox', '0')); // hourly-liquidity sweep gate
-  const channel = argv.includes('--channel'); // trend-channel filter + band target
+  const bothChannel = argv.includes('--channel'); // filter + band target
+  const channelFilter = bothChannel || argv.includes('--channel-filter'); // slope filter only
+  const channelTarget = bothChannel || argv.includes('--channel-target'); // band target only
   const dumpPath = flag('--dump');
 
   let m1: Candle[];
@@ -114,7 +116,7 @@ async function main() {
     symbol: config.symbol,
     minConfluence: minConf,
     minRiskReward: minRR,
-    signal: { targetMode, stopMode, disable, liqProximityPct, channel },
+    signal: { targetMode, stopMode, disable, liqProximityPct, channelFilter, channelTarget },
     partial,
     beAtR,
   });
@@ -130,7 +132,7 @@ async function main() {
 
   console.log(`\nBacktest — ${source}`);
   console.log(`  data:        ${m1.length} × 1m  (${from} → ${to} UTC)`);
-  console.log(`  gates:       confluence ≥ ${minConf},  R:R ≥ ${minRR}   target=${targetMode} stop=${stopMode}${partial ? ' partial(scale+BE)' : ''}${liqProximityPct > 0 ? ` liq-prox=${liqProximityPct}%` : ''}${channel ? ' channel' : ''}`);
+  console.log(`  gates:       confluence ≥ ${minConf},  R:R ≥ ${minRR}   target=${targetMode} stop=${stopMode}${partial ? ' partial(scale+BE)' : ''}${liqProximityPct > 0 ? ` liq-prox=${liqProximityPct}%` : ''}${channelFilter ? ' chan-filter' : ''}${channelTarget ? ' chan-target' : ''}`);
   console.log('  ─────────────────────────────────────────────');
   console.log(`  trades:      ${stats.trades}   (${stats.wins}W / ${stats.losses}L / ${stats.timeouts} timeout)`);
   console.log(`  reached draw:${pct(stats.hitDrawRate).padStart(7)}   ← headline: hit TP before stop`);

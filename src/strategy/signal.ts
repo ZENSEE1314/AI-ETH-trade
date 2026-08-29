@@ -63,10 +63,13 @@ export interface SignalOptions {
    *  if price is within this % of the nearest opposing 1H pool AND has just swept
    *  it. 0 (default) leaves the gate off. */
   liqProximityPct?: number;
-  /** Trend-channel mode (the red/green range envelope): only trade with the
-   *  channel's slope, and target the leading band it's travelling toward instead
-   *  of the fixed far draw. Off by default. */
-  channel?: boolean;
+  /** Trend-channel FILTER (the red/green envelope): only trade with the channel's
+   *  slope. Keeps the existing target. Off by default. */
+  channelFilter?: boolean;
+  /** Trend-channel TARGET: aim at the leading band the channel is travelling
+   *  toward (nearer, higher hit rate) instead of the fixed far draw. Off by
+   *  default. Note: this caps the fat-tail trend winners. */
+  channelTarget?: boolean;
 }
 
 const LIQ_GATE_BONUS = 6; // confluence credit when the sweep gate confirms
@@ -129,9 +132,10 @@ export function generateSignal(snap: MarketSnapshot, opts: SignalOptions = {}): 
     reasons.push(conf.reason);
   }
 
-  // 1c. TREND CHANNEL (the red/green envelope) — only trade with the slope. ----
-  const chan = opts.channel ? readTrendChannel(setup, CHANNEL_LEN) : null;
-  if (chan && chan.direction !== 'flat') {
+  // 1c. TREND CHANNEL (the red/green envelope). The filter trades only with the
+  // slope; the target (further down) aims at the leading band. Compute once.
+  const chan = opts.channelFilter || opts.channelTarget ? readTrendChannel(setup, CHANNEL_LEN) : null;
+  if (opts.channelFilter && chan && chan.direction !== 'flat') {
     const opposes =
       (side === 'long' && chan.direction === 'down') ||
       (side === 'short' && chan.direction === 'up');
@@ -277,7 +281,7 @@ export function generateSignal(snap: MarketSnapshot, opts: SignalOptions = {}): 
   // instead of timing out. Falls back to the draw if the band isn't in profit.
   let takeProfit = drawTP ?? computeTarget(side, entry, liq, struct);
   let channelNear: number | undefined;
-  if (chan) {
+  if (opts.channelTarget && chan) {
     const band = side === 'long' ? chan.upper : chan.lower;
     const bandInProfit = side === 'long' ? band > entry : band < entry;
     if (bandInProfit) {

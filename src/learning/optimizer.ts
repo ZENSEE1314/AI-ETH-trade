@@ -33,7 +33,7 @@ export interface SearchGrid {
   minConfluence: number[];
   minRiskReward: number[];
   liqProximityPct: number[]; // hourly-liquidity sweep gate (0 = off)
-  channel: boolean[]; // trend-channel filter + leading-band target
+  channelFilter: boolean[]; // trade only with the trend-channel slope
 }
 
 /** Default grid — starts biased toward the user's profile (draw target, both stops). */
@@ -45,7 +45,9 @@ export function defaultGrid(profile: TradeProfile): SearchGrid {
     minConfluence: [60, 75],
     minRiskReward: profile.medianR >= 3 ? [1.5, 2] : [1, 1.5],
     liqProximityPct: [0], // real-data testing showed the sweep gate adds no edge
-    channel: [false, true], // trade the trend channel (filter + band target) or not
+    // Search the channel FILTER only; the band TARGET tested worse on real data
+    // (it caps the fat-tail trend legs the draw/sweep edge depends on).
+    channelFilter: [false, true],
   };
 }
 
@@ -73,12 +75,12 @@ export function optimize(m1: Candle[], profile: TradeProfile, grid = defaultGrid
         for (const minConfluence of grid.minConfluence) {
           for (const minRiskReward of grid.minRiskReward) {
             for (const liqProximityPct of grid.liqProximityPct) {
-              for (const channel of grid.channel) {
+              for (const channelFilter of grid.channelFilter) {
                 const { partial, beAtR } = EXIT[exit];
                 const { stats } = backtest(m1, {
                   minConfluence,
                   minRiskReward,
-                  signal: { targetMode, stopMode, liqProximityPct, channel },
+                  signal: { targetMode, stopMode, liqProximityPct, channelFilter },
                   partial,
                   beAtR,
                 });
@@ -87,7 +89,8 @@ export function optimize(m1: Candle[], profile: TradeProfile, grid = defaultGrid
                   minConfluence,
                   minRiskReward,
                   liqProximityPct,
-                  channel,
+                  channelFilter,
+                  channelTarget: false,
                   partial,
                   beAtR,
                 };

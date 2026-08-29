@@ -45,7 +45,7 @@ export interface EngineState {
     minConfluence: number;
     minRiskReward: number;
     liqProximityPct: number;
-    channel: boolean;
+    channelFilter: boolean;
     exit: string;
     trainedAt: number | null;
   };
@@ -166,7 +166,8 @@ export class TradeEngine extends EventEmitter {
       const signal = generateSignal(snap, {
         ...this.learned.signal,
         liqProximityPct: this.learned.liqProximityPct,
-        channel: this.learned.channel,
+        channelFilter: this.learned.channelFilter,
+        channelTarget: this.learned.channelTarget,
       });
       if (signal) this.processSignal(signal);
 
@@ -323,7 +324,7 @@ export class TradeEngine extends EventEmitter {
         minConfluence: this.learned.minConfluence,
         minRiskReward: this.learned.minRiskReward,
         liqProximityPct: this.learned.liqProximityPct,
-        channel: this.learned.channel,
+        channelFilter: this.learned.channelFilter,
         exit: this.learned.partial ? 'partial' : this.learned.beAtR ? `be@${this.learned.beAtR}R` : 'tp',
         trainedAt: this.learned.meta?.trainedAt ?? null,
       },

@@ -87,7 +87,7 @@ async function main() {
   console.log('  fit    target/stop     exit         conf  rr   chan  trades  WR      exp     PF');
   for (const c of ranked.slice(0, 8)) {
     const exit = c.params.partial ? 'partial' : c.params.beAtR > 0 ? `be${c.params.beAtR}` : 'tp';
-    const chan = c.params.channel ? 'on' : 'off';
+    const chan = c.params.channelFilter ? 'on' : 'off';
     console.log(
       `  ${c.fitness.toFixed(2).padStart(5)}  ${(c.params.signal.targetMode + '/' + c.params.signal.stopMode).padEnd(14)} ${exit.padEnd(11)} ` +
         `${String(c.params.minConfluence).padStart(3)}  ${String(c.params.minRiskReward).padStart(3)}  ${chan.padStart(4)}  ${String(c.stats.trades).padStart(5)}  ` +
@@ -117,7 +117,7 @@ async function main() {
       `${learned.partial ? 'partial(scale+BE) ' : learned.beAtR ? `be@${learned.beAtR}R ` : ''}` +
       `conf≥${learned.minConfluence} rr≥${learned.minRiskReward}` +
       `${learned.liqProximityPct > 0 ? ` liq-gate≤${learned.liqProximityPct}%` : ''}` +
-      `${learned.channel ? ' channel' : ''}\n`,
+      `${learned.channelFilter ? ' chan-filter' : ''}\n`,
   );
   console.log(
     'Note: this is parameter learning on the given data — it tunes the engine toward your profile.\n' +
