@@ -109,6 +109,7 @@ rate against R:
 | `--stop sweep` | stop behind the sweep extreme (noise-proof) vs `swing` = just past the 1M pivot (tight) |
 | `--partial` | scale out at the near pool, move the stop to breakeven, run the rest to the full draw — the classic high-win-rate management |
 | `--be R` | move the stop to breakeven after price trades R in profit |
+| `--liq-prox N` | the manual liquidity read as a hard gate: only take a setup when price is within N% of the nearest opposing 1H pool **and** has just swept it (0 = off) |
 | `--min-conf N` | selectivity: fewer, higher-quality setups |
 | `--disable a,b` | ablation — switch indicators off one by one (ema, vwap, structure, ltfdraw, context, liquidity, setup) to see each one's contribution |
 | `--dump file` | write every trade (with MFE/MAE, stop%, reachedNear) to JSON for loss analysis |
@@ -149,6 +150,18 @@ likely to sweep and you **buy** the reversal; buy-side liquidity above is where
 you **sell** / take longs off. The dashboard's *Liquidity Map* panel shows the
 nearest buy/sell pools live, and the *Learned Config* panel shows what the engine
 is currently trained to do.
+
+The map also feeds the entry logic directly as an optional **sweep gate**
+(`liquiditySweepConfirms`): when it's on, a signal only fires if price is sitting
+within a set % of the nearest opposing pool **and** a recent 1H bar has already
+pierced (swept) it — exactly the "wait for the liquidity to be taken, then trade
+the reversal" read. It's a `liqProximityPct` on the signal, a `--liq-prox N` flag
+on the backtester, and one of the axes the learner searches (0 = off vs. a tight
+proximity), so the engine can *learn* whether to demand a fresh sweep. It's a
+strong filter — on 90 days of synthetic 1m it cut trade count by ~75–80%; a tight
+0.3% gate improved per-trade expectancy and more than halved max drawdown there,
+while looser gates hurt. That non-monotonic result is the expected fingerprint of
+data with no real edge — judge it on real klines.
 
 > This is **parameter learning**, not supervised ML — a handful of all-winner
 > reference trades has no labelled loss surface to fit. On synthetic/random data

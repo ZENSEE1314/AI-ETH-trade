@@ -19,6 +19,7 @@ import { buildLiquidity, detectSweep } from './liquidity.js';
 import { detectDrawOnLiquidity } from './drawOnLiquidity.js';
 import { premiumDiscount } from './fvg.js';
 import { readVwap } from './vwap.js';
+import { liquiditySweepConfirms } from './liquidityMap.js';
 import { readEma, emaSupports } from './ema.js';
 import { analyzeCandle } from './candles.js';
 
@@ -57,7 +58,13 @@ export interface SignalOptions {
    *  setup, ema, vwap, liquidity. A disabled indicator adds no confluence and
    *  drops any veto it enforces. */
   disable?: string[];
+  /** Hourly-liquidity entry gate (the manual read): when > 0, only take a signal
+   *  if price is within this % of the nearest opposing 1H pool AND has just swept
+   *  it. 0 (default) leaves the gate off. */
+  liqProximityPct?: number;
 }
+
+const LIQ_GATE_BONUS = 6; // confluence credit when the sweep gate confirms
 
 export function generateSignal(snap: MarketSnapshot, opts: SignalOptions = {}): Signal | null {
   const targetMode = opts.targetMode ?? 'draw';
@@ -102,6 +109,17 @@ export function generateSignal(snap: MarketSnapshot, opts: SignalOptions = {}): 
     side = bias.direction;
     confluence += WEIGHTS.draw;
     reasons.push(`BIAS (no draw): ${side.toUpperCase()} — ${bias.reasons.join('; ')}`);
+  }
+
+  // 1b. LIQUIDITY-SWEEP GATE (the manual read) — only trade when price is sitting
+  // at the nearest opposing 1H pool and has just swept it. Off unless enabled.
+  const liqGate = opts.liqProximityPct ?? 0;
+  if (liqGate > 0) {
+    const gatePrice = entryTf.at(-1)!.close;
+    const conf = liquiditySweepConfirms(snap.h1.length ? snap.h1 : setup, side, gatePrice, liqGate);
+    if (!conf.ok) return null;
+    confluence += LIQ_GATE_BONUS;
+    reasons.push(conf.reason);
   }
 
   // 2. CONTEXT (1H) — confirmation must not oppose the direction. --------------

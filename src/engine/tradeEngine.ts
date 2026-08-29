@@ -42,6 +42,7 @@ export interface EngineState {
     stopMode: string;
     minConfluence: number;
     minRiskReward: number;
+    liqProximityPct: number;
     exit: string;
     trainedAt: number | null;
   };
@@ -149,7 +150,10 @@ export class TradeEngine extends EventEmitter {
       this.manageOpenPositions(snap);
       this.maybeRelearn();
 
-      const signal = generateSignal(snap, this.learned.signal);
+      const signal = generateSignal(snap, {
+        ...this.learned.signal,
+        liqProximityPct: this.learned.liqProximityPct,
+      });
       if (signal) this.processSignal(signal);
 
       this.emit('update', this.state());
@@ -280,6 +284,7 @@ export class TradeEngine extends EventEmitter {
         stopMode: this.learned.signal.stopMode,
         minConfluence: this.learned.minConfluence,
         minRiskReward: this.learned.minRiskReward,
+        liqProximityPct: this.learned.liqProximityPct,
         exit: this.learned.partial ? 'partial' : this.learned.beAtR ? `be@${this.learned.beAtR}R` : 'tp',
         trainedAt: this.learned.meta?.trainedAt ?? null,
       },

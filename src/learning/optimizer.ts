@@ -32,6 +32,7 @@ export interface SearchGrid {
   exit: ExitMode[];
   minConfluence: number[];
   minRiskReward: number[];
+  liqProximityPct: number[]; // hourly-liquidity sweep gate (0 = off)
 }
 
 /** Default grid — starts biased toward the user's profile (draw target, both stops). */
@@ -40,8 +41,9 @@ export function defaultGrid(profile: TradeProfile): SearchGrid {
     targetMode: profile.targetStyle === 'near' ? ['near', 'draw'] : ['draw', 'near'],
     stopMode: ['swing', 'sweep'],
     exit: ['tp', 'partial', 'be'],
-    minConfluence: [60, 70, 75],
+    minConfluence: [60, 75],
     minRiskReward: profile.medianR >= 3 ? [1.5, 2] : [1, 1.5],
+    liqProximityPct: [0, 0.6], // off vs. "sit at the swept pool" — the manual read
   };
 }
 
@@ -68,22 +70,25 @@ export function optimize(m1: Candle[], profile: TradeProfile, grid = defaultGrid
       for (const exit of grid.exit) {
         for (const minConfluence of grid.minConfluence) {
           for (const minRiskReward of grid.minRiskReward) {
-            const { partial, beAtR } = EXIT[exit];
-            const { stats } = backtest(m1, {
-              minConfluence,
-              minRiskReward,
-              signal: { targetMode, stopMode },
-              partial,
-              beAtR,
-            });
-            const params: LearnedParams = {
-              signal: { targetMode, stopMode },
-              minConfluence,
-              minRiskReward,
-              partial,
-              beAtR,
-            };
-            out.push({ params, stats, fitness: fitness(stats, profile) });
+            for (const liqProximityPct of grid.liqProximityPct) {
+              const { partial, beAtR } = EXIT[exit];
+              const { stats } = backtest(m1, {
+                minConfluence,
+                minRiskReward,
+                signal: { targetMode, stopMode, liqProximityPct },
+                partial,
+                beAtR,
+              });
+              const params: LearnedParams = {
+                signal: { targetMode, stopMode },
+                minConfluence,
+                minRiskReward,
+                liqProximityPct,
+                partial,
+                beAtR,
+              };
+              out.push({ params, stats, fitness: fitness(stats, profile) });
+            }
           }
         }
       }

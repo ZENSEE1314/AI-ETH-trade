@@ -9,6 +9,7 @@ export interface LearnedParams {
   signal: Required<Pick<SignalOptions, 'targetMode' | 'stopMode'>>;
   minConfluence: number; // selectivity gate
   minRiskReward: number; // R:R gate
+  liqProximityPct: number; // hourly-liquidity sweep gate (0 = off)
   partial: boolean; // scale out at the near pool + breakeven runner
   beAtR: number; // move stop to breakeven after this many R (0 = off)
   meta?: {
@@ -28,6 +29,7 @@ export function defaultLearned(): LearnedParams {
     signal: { targetMode: 'draw', stopMode: 'swing' },
     minConfluence: 60,
     minRiskReward: 2,
+    liqProximityPct: 0,
     partial: false,
     beAtR: 0,
   };

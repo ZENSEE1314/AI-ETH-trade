@@ -85,6 +85,7 @@ function renderLearned(l) {
       <div><span>Exit</span> <b>${l.exit}</b></div>
       <div><span>Min conf</span> <b>${l.minConfluence}</b></div>
       <div><span>Min R:R</span> <b>${l.minRiskReward}</b></div>
+      <div><span>Liq gate</span> <b>${l.liqProximityPct > 0 ? '≤' + l.liqProximityPct + '%' : 'off'}</b></div>
     </div>
     <div class="reasons"><div>trained: ${when}</div></div>`;
 }

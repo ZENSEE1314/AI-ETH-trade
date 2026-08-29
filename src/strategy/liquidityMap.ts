@@ -7,7 +7,7 @@
 // rests above (sweep, then you SELL / it's the long target). The nearest pool on
 // each side is the level to watch right now.
 
-import type { Candle } from '../types.js';
+import type { Candle, Side } from '../types.js';
 import { findSwings } from './structure.js';
 
 export interface LiquidityPool {
@@ -65,6 +65,51 @@ export function buildLiquidityMap(candles: Candle[], lookback = 500, tolPct = 0.
     nearestSell: buySide[0] ?? null,
     nearestBuy: sellSide[0] ?? null,
   };
+}
+
+export interface LiquiditySweepCheck {
+  ok: boolean;
+  pool: LiquidityPool | null;
+  reason: string;
+}
+
+/**
+ * The manual read as a gate: only take the trade when price is sitting right at
+ * the nearest opposing pool AND has just swept it. For a long that's the nearest
+ * sell-side pool below (`nearestBuy`) — a recent bar must have pierced it (low ≤
+ * pool) while price has since reclaimed above it, and current price must be
+ * within `proximityPct` of the pool. Short mirrors on the nearest buy-side above.
+ *
+ * `recent` bounds how many of the latest 1H bars count as "just swept".
+ */
+export function liquiditySweepConfirms(
+  candles: Candle[],
+  side: Side,
+  price: number,
+  proximityPct: number,
+  recent = 40,
+): LiquiditySweepCheck {
+  const map = buildLiquidityMap(candles);
+  const pool = side === 'long' ? map.nearestBuy : map.nearestSell; // opposing pool we sweep
+  if (!pool || price <= 0) {
+    return { ok: false, pool: null, reason: 'LIQ-GATE: no opposing pool to sweep' };
+  }
+
+  const distPct = (Math.abs(price - pool.price) / price) * 100;
+  const near = distPct <= proximityPct;
+
+  const tail = candles.slice(-recent);
+  const swept =
+    side === 'long'
+      ? tail.some((c) => c.low <= pool.price) && price > pool.price // dipped into it, back above
+      : tail.some((c) => c.high >= pool.price) && price < pool.price; // spiked into it, back below
+
+  const ok = near && swept;
+  const poolName = side === 'long' ? 'sell-side' : 'buy-side';
+  const reason = ok
+    ? `LIQ-GATE: swept ${poolName} @ ${pool.price.toFixed(2)} (${distPct.toFixed(2)}% away, ×${pool.touches})`
+    : `LIQ-GATE: no fresh sweep of ${poolName} @ ${pool.price.toFixed(2)} (${distPct.toFixed(2)}% away, near=${near}, swept=${swept})`;
+  return { ok, pool, reason };
 }
 
 /** Group sorted values within `tolPct` into pools; touches = swings in the group. */

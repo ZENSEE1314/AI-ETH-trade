@@ -84,6 +84,7 @@ async function main() {
   const partial = argv.includes('--partial'); // scale out at near, BE stop, run to draw
   const disable = (flag('--disable', '') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   const beAtR = Number(flag('--be', '0')); // move stop to breakeven after this many R
+  const liqProximityPct = Number(flag('--liq-prox', '0')); // hourly-liquidity sweep gate
   const dumpPath = flag('--dump');
 
   let m1: Candle[];
@@ -124,7 +125,7 @@ async function main() {
     symbol: config.symbol,
     minConfluence: minConf,
     minRiskReward: minRR,
-    signal: { targetMode, stopMode, disable },
+    signal: { targetMode, stopMode, disable, liqProximityPct },
     partial,
     beAtR,
   });
@@ -140,7 +141,7 @@ async function main() {
 
   console.log(`\nBacktest — ${source}`);
   console.log(`  data:        ${m1.length} × 1m  (${from} → ${to} UTC)`);
-  console.log(`  gates:       confluence ≥ ${minConf},  R:R ≥ ${minRR}   target=${targetMode} stop=${stopMode}${partial ? ' partial(scale+BE)' : ''}`);
+  console.log(`  gates:       confluence ≥ ${minConf},  R:R ≥ ${minRR}   target=${targetMode} stop=${stopMode}${partial ? ' partial(scale+BE)' : ''}${liqProximityPct > 0 ? ` liq-prox=${liqProximityPct}%` : ''}`);
   console.log('  ─────────────────────────────────────────────');
   console.log(`  trades:      ${stats.trades}   (${stats.wins}W / ${stats.losses}L / ${stats.timeouts} timeout)`);
   console.log(`  reached draw:${pct(stats.hitDrawRate).padStart(7)}   ← headline: hit TP before stop`);
