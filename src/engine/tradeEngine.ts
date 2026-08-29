@@ -12,6 +12,11 @@ import { loadLearned, saveLearned, type LearnedParams } from '../learning/store.
 import { buildProfile } from '../learning/profile.js';
 import { optimize } from '../learning/optimizer.js';
 import { USER_TRADES } from '../learning/history.js';
+import { buildLiquidityMap, type LiquidityMap } from '../strategy/liquidityMap.js';
+
+const RELEARN_EVERY = 10; // closed trades between online relearn passes
+const MIN_RELEARN_BUFFER = 2000; // 1m candles needed before a relearn is trusted
+const KLINE_BUFFER_CAP = 60_000; // ~41 days of 1m held for online learning
 import { assessRisk, type RiskContext } from '../risk/riskManager.js';
 import { openPaperPosition, evaluatePosition, closePosition } from '../exchange/paperBroker.js';
 import { placeLiveOrder } from '../exchange/bitunix.js';
@@ -31,6 +36,15 @@ export interface EngineState {
   openPositions: Position[];
   recentSignals: Signal[];
   stats: ReturnType<Journal['stats']>;
+  liquidity: LiquidityMap | null; // hourly liquidity map: nearest buy/sell pools
+  learned: {
+    targetMode: string;
+    stopMode: string;
+    minConfluence: number;
+    minRiskReward: number;
+    exit: string;
+    trainedAt: number | null;
+  };
   updatedAt: number;
 }
 
@@ -45,6 +59,10 @@ export class TradeEngine extends EventEmitter {
   // The learned "trade like me" config — loaded from learned.json, applied to
   // every signal and gate. Re-taught by learn CLI or this.relearn().
   private learned: LearnedParams = loadLearned();
+  private lastLiquidity: LiquidityMap | null = null;
+  private klineBuffer: Candle[] = []; // accumulated 1m history for online relearn
+  private lastKlineTime = 0;
+  private closedSinceRelearn = 0;
 
   /** Base equity comes from settings so it reflects UI changes on restart. */
   get startEquity(): number {
@@ -124,8 +142,12 @@ export class TradeEngine extends EventEmitter {
       const snap = await loadSnapshot(config.symbol);
       this.lastPx = lastPrice(snap);
       this.lastBias = buildBias(snap.h4.length ? snap.h4 : snap.h1).direction;
+      this.accumulateKlines(snap.m1);
+      // Hourly liquidity map — the nearest buy/sell pools to read entries from.
+      this.lastLiquidity = buildLiquidityMap(snap.h1.length ? snap.h1 : snap.m15);
 
       this.manageOpenPositions(snap);
+      this.maybeRelearn();
 
       const signal = generateSignal(snap, this.learned.signal);
       if (signal) this.processSignal(signal);
@@ -133,6 +155,31 @@ export class TradeEngine extends EventEmitter {
       this.emit('update', this.state());
     } catch (err) {
       logger.error(`Cycle error: ${(err as Error).message}`);
+    }
+  }
+
+  /** Append new 1m candles to the online-learning buffer (deduped, capped). */
+  private accumulateKlines(m1: Candle[]): void {
+    for (const c of m1) {
+      if (c.time > this.lastKlineTime) {
+        this.klineBuffer.push(c);
+        this.lastKlineTime = c.time;
+      }
+    }
+    if (this.klineBuffer.length > KLINE_BUFFER_CAP) {
+      this.klineBuffer = this.klineBuffer.slice(-KLINE_BUFFER_CAP);
+    }
+  }
+
+  /** Online self-learning: after enough closed trades, retune on the buffer. */
+  private maybeRelearn(): void {
+    if (this.closedSinceRelearn < RELEARN_EVERY) return;
+    if (this.klineBuffer.length < MIN_RELEARN_BUFFER) return;
+    this.closedSinceRelearn = 0;
+    try {
+      this.relearn(this.klineBuffer);
+    } catch (err) {
+      logger.warn(`Relearn skipped: ${(err as Error).message}`);
     }
   }
 
@@ -145,6 +192,7 @@ export class TradeEngine extends EventEmitter {
       const trade = evaluatePosition(pos, candle);
       if (trade) {
         this.journal.record(trade);
+        this.closedSinceRelearn++;
         logger.trade(`Closed ${trade.side} ${trade.symbol} via ${trade.reason}: ${trade.pnlUsdt} USDT (${trade.rMultiple}R)`);
         this.emit('trade', trade);
       } else {
@@ -226,6 +274,15 @@ export class TradeEngine extends EventEmitter {
       openPositions: this.openPositions,
       recentSignals: this.recentSignals,
       stats: this.journal.stats(),
+      liquidity: this.lastLiquidity,
+      learned: {
+        targetMode: this.learned.signal.targetMode,
+        stopMode: this.learned.signal.stopMode,
+        minConfluence: this.learned.minConfluence,
+        minRiskReward: this.learned.minRiskReward,
+        exit: this.learned.partial ? 'partial' : this.learned.beAtR ? `be@${this.learned.beAtR}R` : 'tp',
+        trainedAt: this.learned.meta?.trainedAt ?? null,
+      },
       updatedAt: Date.now(),
     };
   }

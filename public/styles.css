@@ -99,6 +99,16 @@ main { padding: 24px 28px 60px; max-width: 1200px; margin: 0 auto; }
   color: var(--accent); background: rgba(76,141,255,0.14); border-radius: 4px;
   padding: 1px 6px; margin-right: 6px; }
 .draw b { color: var(--accent); }
+.liq-row { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 13px;
+  padding: 5px 8px; border-radius: 6px; margin-bottom: 3px; }
+.liq-row.sell { background: rgba(255,92,108,0.08); }
+.liq-row.buy { background: rgba(38,208,124,0.08); }
+.liq-row b { color: var(--text); }
+.liq-tag { display: inline-block; min-width: 96px; font-size: 10px; font-weight: 700; letter-spacing: 0.04em; }
+.liq-row.sell .liq-tag { color: var(--red); }
+.liq-row.buy .liq-tag { color: var(--green); }
+.liq-price { text-align: center; font-family: var(--mono); font-size: 12px; color: var(--muted);
+  border-top: 1px dashed var(--border); border-bottom: 1px dashed var(--border); padding: 4px 0; margin: 4px 0; }
 .conf-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 8px; }
 .conf-fill { height: 100%; background: linear-gradient(90deg, var(--amber), var(--green)); }
 .btn-close { background: var(--bg); border: 1px solid var(--border); color: var(--muted); border-radius: 6px; padding: 5px 10px; cursor: pointer; font-size: 12px; }

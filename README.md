@@ -135,8 +135,20 @@ npm run learn -- --demo                 # smoke test with no data/network
 
 It writes `learned.json` under `DATA_DIR`; the paper engine loads it on start
 and trades that way (target/stop mode, confluence and R:R gates). Re-running
-`learn` on fresh data — or `engine.relearn(candles)` online — is the learning
-loop: each pass re-teaches the engine from newer market behaviour.
+`learn` on fresh data is the learning loop, and the engine also **relearns
+online**: it accumulates the 1m klines it sees and, every 10 closed trades,
+retunes on that buffer against your profile and applies the new config live.
+
+## Liquidity map — the liq of all hours
+
+Every cycle the engine reads the **1H liquidity across the whole window**
+(`src/strategy/liquidityMap.ts`): it clusters the swing highs and lows into
+resting pools and surfaces the **nearest pool above and below** the current
+price. That's the entry read — sell-side liquidity below is where price is
+likely to sweep and you **buy** the reversal; buy-side liquidity above is where
+you **sell** / take longs off. The dashboard's *Liquidity Map* panel shows the
+nearest buy/sell pools live, and the *Learned Config* panel shows what the engine
+is currently trained to do.
 
 > This is **parameter learning**, not supervised ML — a handful of all-winner
 > reference trades has no labelled loss surface to fit. On synthetic/random data

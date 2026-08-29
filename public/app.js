@@ -49,6 +49,44 @@ function renderState(s) {
 
   renderPositions(s.openPositions);
   renderSignals(s.recentSignals);
+  renderLiquidity(s.liquidity, s.lastPrice);
+  renderLearned(s.learned);
+}
+
+function renderLiquidity(liq, price) {
+  const el = $('liquidity');
+  if (!el) return;
+  if (!liq) { el.innerHTML = '<p class="muted">Waiting for data…</p>'; return; }
+  const pool = (p, label, cls) => !p ? '' : `
+    <div class="liq-row ${cls}">
+      <span class="liq-tag">${label}</span>
+      <b>$${fmt(p.price)}</b>
+      <span class="muted">${p.distancePct}% away${p.touches > 1 ? ' · ×' + p.touches : ''}</span>
+    </div>`;
+  // Buy-side above (sell / long target), sell-side below (buy / short target).
+  const above = (liq.buySide || []).slice(0, 3).map((p, i) =>
+    pool(p, i === 0 ? 'SELL ▲ nearest' : 'buy-side ▲', 'sell')).join('');
+  const below = (liq.sellSide || []).slice(0, 3).map((p, i) =>
+    pool(p, i === 0 ? 'BUY ▼ nearest' : 'sell-side ▼', 'buy')).join('');
+  el.innerHTML = above +
+    `<div class="liq-price">price $${fmt(price)}</div>` + below ||
+    '<p class="muted">No clear pools yet.</p>';
+}
+
+function renderLearned(l) {
+  const el = $('learned');
+  if (!el) return;
+  if (!l) { el.innerHTML = '<p class="muted">Loading…</p>'; return; }
+  const when = l.trainedAt ? new Date(l.trainedAt).toLocaleString() : 'shipping default (not yet trained)';
+  el.innerHTML = `
+    <div class="kv">
+      <div><span>Target</span> <b>${l.targetMode}</b></div>
+      <div><span>Stop</span> <b>${l.stopMode}</b></div>
+      <div><span>Exit</span> <b>${l.exit}</b></div>
+      <div><span>Min conf</span> <b>${l.minConfluence}</b></div>
+      <div><span>Min R:R</span> <b>${l.minRiskReward}</b></div>
+    </div>
+    <div class="reasons"><div>trained: ${when}</div></div>`;
 }
 
 function renderPositions(positions) {
