@@ -44,6 +44,7 @@ async function main() {
     return i >= 0 ? argv[i + 1] : d;
   };
   const window = Number(flag('--window', '45000')); // cap data so the search stays fast
+  const costBps = Number(flag('--cost-bps', '0')); // per-side fee+slippage, bps (Bybit taker ≈ 5.5)
 
   let m1: Candle[];
   let source: string;
@@ -79,8 +80,8 @@ async function main() {
       `win rate ${(profile.winRate * 100).toFixed(0)}%  |  avg stop ${profile.avgStopPct}%  |  avgR ${profile.avgR} (median ${profile.medianR})  |  target=${profile.targetStyle}`,
   );
 
-  console.log(`\nLearning on ${source} (${m1.length} × 1m)…`);
-  const ranked = optimize(m1, profile);
+  console.log(`\nLearning on ${source} (${m1.length} × 1m)${costBps > 0 ? ` — cost ${costBps}bps/side` : ' — frictionless'}…`);
+  const ranked = optimize(m1, profile, undefined, costBps);
   const best = ranked[0];
 
   console.log('\nTop configs (best first):');

@@ -119,6 +119,7 @@ rate against R:
 | `--partial` | scale out at the near pool, move the stop to breakeven, run the rest to the full draw — the classic high-win-rate management |
 | `--be R` | move the stop to breakeven after price trades R in profit |
 | `--liq-prox N` | the manual liquidity read as a hard gate: only take a setup when price is within N% of the nearest opposing 1H pool **and** has just swept it (0 = off) |
+| `--cost-bps N` | charge N basis points per side (fee + slippage) — Bybit taker ≈ 5.5. **Decisive for thin edges**: a strategy that scalps a sub-0.1R gross edge with tight stops usually inverts once real fees are applied. Always sanity-check with this before believing a result. |
 | `--min-conf N` | selectivity: fewer, higher-quality setups |
 | `--disable a,b` | ablation — switch indicators off one by one (ema, vwap, structure, ltfdraw, context, liquidity, setup) to see each one's contribution |
 | `--dump file` | write every trade (with MFE/MAE, stop%, reachedNear) to JSON for loss analysis |

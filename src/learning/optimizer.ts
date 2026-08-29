@@ -66,8 +66,15 @@ export function fitness(stats: BacktestStats, profile: TradeProfile): number {
   return f;
 }
 
-/** Run the search over `m1` and return every candidate, best first. */
-export function optimize(m1: Candle[], profile: TradeProfile, grid = defaultGrid(profile)): Candidate[] {
+/** Run the search over `m1` and return every candidate, best first. `costBps` is
+ *  the per-side fee+slippage the backtest charges — pass it so the learner tunes
+ *  on net-of-cost results (a thin gross edge can invert once fees are real). */
+export function optimize(
+  m1: Candle[],
+  profile: TradeProfile,
+  grid = defaultGrid(profile),
+  costBps = 0,
+): Candidate[] {
   const out: Candidate[] = [];
   for (const targetMode of grid.targetMode) {
     for (const stopMode of grid.stopMode) {
@@ -83,6 +90,7 @@ export function optimize(m1: Candle[], profile: TradeProfile, grid = defaultGrid
                   signal: { targetMode, stopMode, liqProximityPct, channelFilter },
                   partial,
                   beAtR,
+                  costBps,
                 });
                 const params: LearnedParams = {
                   signal: { targetMode, stopMode },

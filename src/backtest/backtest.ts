@@ -21,6 +21,7 @@ export interface BacktestOptions {
   partial?: boolean; // scale out at the near pool, move stop to breakeven, run to draw
   scaleFrac?: number; // fraction banked at the near pool (default 0.5)
   beAtR?: number; // move stop to breakeven once price is this many R in profit (0 = off)
+  costBps?: number; // per-side trading cost (fee + slippage) in basis points; 0 = frictionless
 }
 
 interface SimResult {
@@ -218,6 +219,14 @@ export function backtest(m1: Candle[], opts: BacktestOptions = {}): BacktestResu
       ? simulatePartial(sig, m1, i, limit, opts.scaleFrac ?? 0.5)
       : simulateSingle(sig, m1, i, limit, opts.beAtR ?? 0);
 
+    // Trading cost in R: each fill pays costBps of notional; the stop distance is
+    // 1R, so cost/leg = (costBps/1e4)·entry / risk. Partials fill 3 times (entry,
+    // scale-out, runner), single exits twice. This is what decides a thin edge.
+    const risk = Math.abs(sig.entry - sig.stopLoss) || 1e-9;
+    const legs = opts.partial ? 3 : 2;
+    const feeR = ((opts.costBps ?? 0) / 10_000) * (sig.entry / risk) * legs;
+    const netR = res.rMultiple - feeR;
+
     trades.push({
       side: sig.side,
       entryTime: t,
@@ -225,7 +234,7 @@ export function backtest(m1: Candle[], opts: BacktestOptions = {}): BacktestResu
       stopLoss: sig.stopLoss,
       takeProfit: sig.takeProfit,
       exit: res.exit,
-      rMultiple: round(res.rMultiple, 2),
+      rMultiple: round(netR, 2),
       outcome: res.outcome,
       confluence: sig.confluence,
       drawTimeframe: sig.drawTimeframe,
