@@ -77,6 +77,7 @@ async function main() {
   const channelFilter = bothChannel || argv.includes('--channel-filter'); // slope filter only
   const channelTarget = bothChannel || argv.includes('--channel-target'); // band target only
   const costBps = Number(flag('--cost-bps', '0')); // per-side fee+slippage, bps (Bybit taker ≈ 5.5)
+  const chain = argv.includes('--chain'); // strict manual chain: 1H HL/LH → 15M → 1M + VWAP
   const dumpPath = flag('--dump');
 
   let m1: Candle[];
@@ -117,7 +118,7 @@ async function main() {
     symbol: config.symbol,
     minConfluence: minConf,
     minRiskReward: minRR,
-    signal: { targetMode, stopMode, disable, liqProximityPct, channelFilter, channelTarget },
+    signal: { targetMode, stopMode, disable, liqProximityPct, channelFilter, channelTarget, chain },
     partial,
     beAtR,
     costBps,
@@ -134,7 +135,7 @@ async function main() {
 
   console.log(`\nBacktest — ${source}`);
   console.log(`  data:        ${m1.length} × 1m  (${from} → ${to} UTC)`);
-  console.log(`  gates:       confluence ≥ ${minConf},  R:R ≥ ${minRR}   target=${targetMode} stop=${stopMode}${partial ? ' partial(scale+BE)' : ''}${liqProximityPct > 0 ? ` liq-prox=${liqProximityPct}%` : ''}${channelFilter ? ' chan-filter' : ''}${channelTarget ? ' chan-target' : ''}${costBps > 0 ? ` cost=${costBps}bps/side` : ' (frictionless)'}`);
+  console.log(`  gates:       confluence ≥ ${minConf},  R:R ≥ ${minRR}   target=${targetMode} stop=${stopMode}${partial ? ' partial(scale+BE)' : ''}${liqProximityPct > 0 ? ` liq-prox=${liqProximityPct}%` : ''}${channelFilter ? ' chan-filter' : ''}${channelTarget ? ' chan-target' : ''}${chain ? ' CHAIN(1H→15M→1M+VWAP)' : ''}${costBps > 0 ? ` cost=${costBps}bps/side` : ' (frictionless)'}`);
   console.log('  ─────────────────────────────────────────────');
   console.log(`  trades:      ${stats.trades}   (${stats.wins}W / ${stats.losses}L / ${stats.timeouts} timeout)`);
   console.log(`  reached draw:${pct(stats.hitDrawRate).padStart(7)}   ← headline: hit TP before stop`);

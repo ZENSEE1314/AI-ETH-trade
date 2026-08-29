@@ -70,7 +70,13 @@ export interface SignalOptions {
    *  toward (nearer, higher hit rate) instead of the fixed far draw. Off by
    *  default. Note: this caps the fat-tail trend winners. */
   channelTarget?: boolean;
+  /** Strict manual chain: liquidity → an explicit 1H reaction swing (HL long /
+   *  LH short) → the 15M HL/LH → a confirmed 1M entry on the next candle → with
+   *  price near the VWAP line or outside a band. Every step is a hard gate. */
+  chain?: boolean;
 }
+
+const VWAP_NEAR_PCT = 0.2; // "near VWAP": within this % of the VWAP line
 
 const LIQ_GATE_BONUS = 6; // confluence credit when the sweep gate confirms
 const CHANNEL_BONUS = 8; // confluence credit when the trend channel aligns
@@ -162,6 +168,15 @@ export function generateSignal(snap: MarketSnapshot, opts: SignalOptions = {}): 
     }
   }
 
+  // CHAIN step — an explicit 1H reaction swing (HL for a long / LH for a short).
+  // This is the "come to the 1H HL/LH before zooming down" step of the manual read.
+  if (opts.chain) {
+    const h1Swing = lastReactionSwing(snap.h1.length ? snap.h1 : setup, side);
+    if (!h1Swing || !h1Swing.higher) return null;
+    confluence += WEIGHTS.context;
+    reasons.push(`CHAIN: 1H ${side === 'long' ? 'higher-low' : 'lower-high'} @ ${h1Swing.swing.price.toFixed(2)}`);
+  }
+
   // 3. LIQUIDITY / PRICING — sweep in our favor or good discount/premium. ------
   const liq = buildLiquidity(setup);
   const sweep = detectSweep(setup, liq);
@@ -204,6 +219,7 @@ export function generateSignal(snap: MarketSnapshot, opts: SignalOptions = {}): 
   // 5. SETUP (15M) — the reaction swing after the sweep (HL long / LH short). --
   const setupSwing = lastReactionSwing(setup, side);
   if (!setupSwing) return null; // no pivot to build the setup on (geometry, always required)
+  if (opts.chain && !setupSwing.higher) return null; // chain: must be a real 15M HL/LH
   if (!off('setup')) {
     if (setupSwing.higher) {
       confluence += WEIGHTS.setup;
@@ -224,6 +240,7 @@ export function generateSignal(snap: MarketSnapshot, opts: SignalOptions = {}): 
   const candleConfirms =
     (side === 'long' && (lastCandle.bullish || lastCandle.rejection === 'bottom')) ||
     (side === 'short' && (lastCandle.bearish || lastCandle.rejection === 'top'));
+  if (opts.chain && !candleConfirms) return null; // chain: the 1M next candle must confirm
   if (candleConfirms) {
     confluence += WEIGHTS.entry;
     reasons.push(
@@ -232,6 +249,16 @@ export function generateSignal(snap: MarketSnapshot, opts: SignalOptions = {}): 
   } else {
     confluence += WEIGHTS.entry * 0.4;
     reasons.push(`ENTRY: 1M ${side === 'long' ? 'HL' : 'LH'} @ ${entrySwing.swing.price.toFixed(2)}, awaiting candle confirmation`);
+  }
+
+  // CHAIN step — VWAP: the 1M entry must be near the VWAP line or outside a band.
+  if (opts.chain) {
+    const v = readVwap(entryTf);
+    const px = entryTf.at(-1)!.close;
+    const nearLine = v.state.vwap > 0 && Math.abs(px - v.state.vwap) / px * 100 <= VWAP_NEAR_PCT;
+    const outsideBand = px >= v.state.upper || px <= v.state.lower;
+    if (!nearLine && !outsideBand) return null;
+    reasons.push(`CHAIN: VWAP ${nearLine ? 'near line' : 'outside band'} (${v.position}, ${v.signal})`);
   }
 
   // 7. EMA 200 confirmation (1H trend → 1M entry). ----------------------------
