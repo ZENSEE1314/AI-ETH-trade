@@ -12,6 +12,7 @@
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
     "backtest": "tsx src/backtest/run.ts",
+    "learn": "tsx src/learning/run.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

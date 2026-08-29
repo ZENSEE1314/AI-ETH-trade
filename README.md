@@ -118,6 +118,32 @@ A high-win-rate preset to try on real data:
 Remember win rate and expectancy trade off on data with no edge — a real
 directional edge is what lets both rise together, so judge these on real klines.
 
+## Self-learning — trade like your journal
+
+The engine can be **taught to trade like your own history**. Your reference
+trades live in `src/learning/history.ts`; `npm run learn` reads them, measures
+your *trading profile* (direction split, stop width, R, win rate, whether you
+bank the near pool or run to the full draw), then **searches the strategy's
+parameters** on real 1m data and saves the config that best reproduces that
+profile while staying profitable:
+
+```bash
+npm run learn -- --bybit ETHUSDT 90     # learn from 90 days of real klines
+npm run learn -- data/eth-1m.json       # learn from a saved 1m history
+npm run learn -- --demo                 # smoke test with no data/network
+```
+
+It writes `learned.json` under `DATA_DIR`; the paper engine loads it on start
+and trades that way (target/stop mode, confluence and R:R gates). Re-running
+`learn` on fresh data — or `engine.relearn(candles)` online — is the learning
+loop: each pass re-teaches the engine from newer market behaviour.
+
+> This is **parameter learning**, not supervised ML — a handful of all-winner
+> reference trades has no labelled loss surface to fit. On synthetic/random data
+> it cannot manufacture your win rate; feed real klines for a config that
+> reflects real markets, and keep re-running to keep learning. Paper trading is
+> still the default and every learned trade passes through the full risk core.
+
 ## Accounts & the Settings page
 
 The dashboard is gated by login. On first visit, `/login.html` lets you create the

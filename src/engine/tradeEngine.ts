@@ -8,6 +8,10 @@ import { runtime, canTradeLive } from '../runtime.js';
 import { logger } from '../logger.js';
 import { generateSignal, type MarketSnapshot } from '../strategy/signal.js';
 import { buildBias } from '../strategy/bias.js';
+import { loadLearned, saveLearned, type LearnedParams } from '../learning/store.js';
+import { buildProfile } from '../learning/profile.js';
+import { optimize } from '../learning/optimizer.js';
+import { USER_TRADES } from '../learning/history.js';
 import { assessRisk, type RiskContext } from '../risk/riskManager.js';
 import { openPaperPosition, evaluatePosition, closePosition } from '../exchange/paperBroker.js';
 import { placeLiveOrder } from '../exchange/bitunix.js';
@@ -38,6 +42,9 @@ export class TradeEngine extends EventEmitter {
   private lastBias = 'n/a';
   private running = false;
   private timer: NodeJS.Timeout | null = null;
+  // The learned "trade like me" config — loaded from learned.json, applied to
+  // every signal and gate. Re-taught by learn CLI or this.relearn().
+  private learned: LearnedParams = loadLearned();
 
   /** Base equity comes from settings so it reflects UI changes on restart. */
   get startEquity(): number {
@@ -51,9 +58,48 @@ export class TradeEngine extends EventEmitter {
   start(): void {
     if (this.running || config.analysisIntervalMs <= 0) return;
     this.running = true;
+    this.applyLearned();
     logger.info(`Engine started in ${runtime.tradingMode.toUpperCase()} mode (live ${canTradeLive() ? 'ENABLED' : 'disabled'}).`);
     void this.cycle();
     this.timer = setInterval(() => void this.cycle(), config.analysisIntervalMs);
+  }
+
+  /** Push the learned selectivity/target/stop config into the live gates. */
+  private applyLearned(): void {
+    runtime.minConfluence = this.learned.minConfluence;
+    runtime.minRiskReward = this.learned.minRiskReward;
+    logger.info(
+      `Learned config: target=${this.learned.signal.targetMode} stop=${this.learned.signal.stopMode} ` +
+        `conf≥${this.learned.minConfluence} rr≥${this.learned.minRiskReward}`,
+    );
+  }
+
+  /**
+   * Self-learning step: re-run the optimizer on fresh 1m data against the user's
+   * profile, save the winner, and apply it live. Feed it recent klines (the
+   * engine's own history, or a replay) to keep teaching the engine over time.
+   */
+  relearn(m1: Candle[]): LearnedParams {
+    const profile = buildProfile(USER_TRADES);
+    const ranked = optimize(m1.slice(-45_000), profile);
+    if (ranked.length && ranked[0].fitness > -900) {
+      this.learned = {
+        ...ranked[0].params,
+        meta: {
+          trainedAt: Date.now(),
+          dataPoints: m1.length,
+          fitness: ranked[0].fitness,
+          winRate: ranked[0].stats.winRate,
+          avgR: ranked[0].stats.avgR,
+          hitDrawRate: ranked[0].stats.hitDrawRate,
+          note: 'relearned online from recent klines',
+        },
+      };
+      saveLearned(this.learned);
+      this.applyLearned();
+      logger.info('Engine relearned from recent data.');
+    }
+    return this.learned;
   }
 
   stop(): void {
@@ -81,7 +127,7 @@ export class TradeEngine extends EventEmitter {
 
       this.manageOpenPositions(snap);
 
-      const signal = generateSignal(snap);
+      const signal = generateSignal(snap, this.learned.signal);
       if (signal) this.processSignal(signal);
 
       this.emit('update', this.state());

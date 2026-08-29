@@ -56,8 +56,8 @@ export function assessRisk(signal: Signal, ctx: RiskContext): RiskDecision {
   if (signal.confluence < runtime.minConfluence) {
     return reject(`Confluence ${signal.confluence} < required ${runtime.minConfluence}.`);
   }
-  if (signal.riskReward < config.minRiskReward) {
-    return reject(`R:R ${signal.riskReward} < required ${config.minRiskReward}.`);
+  if (signal.riskReward < runtime.minRiskReward) {
+    return reject(`R:R ${signal.riskReward} < required ${runtime.minRiskReward}.`);
   }
 
   const stopDistance = Math.abs(signal.entry - signal.stopLoss);

@@ -1,0 +1,43 @@
+// The learned strategy configuration — what the optimizer teaches the engine.
+// Persisted as `learned.json` under DATA_DIR so the paper engine trades the
+// learned way across restarts, and each `npm run learn` run updates it.
+
+import type { SignalOptions } from '../strategy/signal.js';
+import { readJson, writeJson } from '../store.js';
+
+export interface LearnedParams {
+  signal: Required<Pick<SignalOptions, 'targetMode' | 'stopMode'>>;
+  minConfluence: number; // selectivity gate
+  minRiskReward: number; // R:R gate
+  partial: boolean; // scale out at the near pool + breakeven runner
+  beAtR: number; // move stop to breakeven after this many R (0 = off)
+  meta?: {
+    trainedAt: number;
+    dataPoints: number;
+    fitness: number;
+    winRate: number;
+    avgR: number;
+    hitDrawRate: number;
+    note: string;
+  };
+}
+
+/** The engine's shipping default before anything is learned. */
+export function defaultLearned(): LearnedParams {
+  return {
+    signal: { targetMode: 'draw', stopMode: 'swing' },
+    minConfluence: 60,
+    minRiskReward: 2,
+    partial: false,
+    beAtR: 0,
+  };
+}
+
+export function loadLearned(): LearnedParams {
+  const stored = readJson<LearnedParams | null>('learned', null);
+  return stored ?? defaultLearned();
+}
+
+export function saveLearned(p: LearnedParams): void {
+  writeJson('learned', p);
+}

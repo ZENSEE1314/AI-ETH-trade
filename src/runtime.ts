@@ -28,6 +28,7 @@ export const runtime = {
   riskPerTradePct: config.riskPerTradePct,
   maxDailyLossPct: config.maxDailyLossPct,
   minConfluence: config.minConfluence,
+  minRiskReward: config.minRiskReward, // learnable gate (see learning/)
   accountEquityUsdt: config.accountEquityUsdt,
 };
 
