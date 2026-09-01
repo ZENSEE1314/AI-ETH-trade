@@ -8,7 +8,7 @@ export interface LogEntry {
   msg: string;
 }
 
-const RING_SIZE = 300;
+const RING_SIZE = 1000; // ~a day of per-minute SCAN heartbeats + events
 const ring: LogEntry[] = [];
 
 function push(level: Level, msg: string): void {

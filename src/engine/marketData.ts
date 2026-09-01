@@ -4,17 +4,44 @@
 import type { Candle } from '../types.js';
 import type { MarketSnapshot } from '../strategy/signal.js';
 import { fetchKlines } from '../exchange/bitunix.js';
+import { fetchBinanceKlines } from '../backtest/fetchBinance.js';
+import { fetchBybitKlines } from '../backtest/fetchBybit.js';
+import { fetchKrakenKlines } from '../exchange/kraken.js';
 import { resample } from '../backtest/resample.js';
+import { logger } from '../logger.js';
 
+/**
+ * Multi-timeframe snapshot for the engine. Tries Bitunix first (matches the
+ * live venue), then falls back to Binance and Bybit public klines so a single
+ * exchange API being unreachable (geo-block, outage) doesn't stall the bot.
+ */
 export async function loadSnapshot(symbol: string): Promise<MarketSnapshot> {
-  // 1H and 1M pull 250+ so the EMA 200 confirmation has enough history on both.
-  const [h4, h1, m15, m1] = await Promise.all([
-    fetchKlines(symbol, '4h', 120),
-    fetchKlines(symbol, '1h', 250),
-    fetchKlines(symbol, '15m', 200),
-    fetchKlines(symbol, '1m', 250),
-  ]);
-  return { symbol, h4, h1, m15, m1 };
+  try {
+    // 1H and 1M pull 250+ so the EMA 200 confirmation has enough history.
+    const [h4, h1, m15, m1] = await Promise.all([
+      fetchKlines(symbol, '4h', 120),
+      fetchKlines(symbol, '1h', 250),
+      fetchKlines(symbol, '15m', 200),
+      fetchKlines(symbol, '1m', 250),
+    ]);
+    return { symbol, h4, h1, m15, m1 };
+  } catch (bitunixErr) {
+    for (const [name, fetcher] of [
+      ['Kraken', () => fetchKrakenKlines(symbol)], // reachable from datacenters
+      ['Binance', () => fetchBinanceKlines(symbol, 4, 'futures')],
+      ['Bybit', () => fetchBybitKlines(symbol, 4)],
+    ] as const) {
+      try {
+        const m1 = await fetcher();
+        if (m1.length < 250) continue;
+        logger.warn(`Bitunix klines failed (${(bitunixErr as Error).message}) — using ${name}.`);
+        return snapshotFromM1(symbol, m1.slice(-60_000));
+      } catch {
+        /* try the next source */
+      }
+    }
+    throw bitunixErr;
+  }
 }
 
 /**

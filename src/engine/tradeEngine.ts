@@ -8,6 +8,7 @@ import { runtime, canTradeLive } from '../runtime.js';
 import { logger } from '../logger.js';
 import { generateSignal, type MarketSnapshot } from '../strategy/signal.js';
 import { buildBias } from '../strategy/bias.js';
+import { readStructure } from '../strategy/structure.js';
 import { loadLearned, saveLearned, type LearnedParams } from '../learning/store.js';
 import { buildProfile } from '../learning/profile.js';
 import { optimize } from '../learning/optimizer.js';
@@ -171,8 +172,16 @@ export class TradeEngine extends EventEmitter {
       this.manageOpenPositions(snap);
       this.maybeRelearn();
 
-      if (runtime.advisorMode) {
-        // The LLM advisor is the trader — it decides entry / stop / target.
+      let outcome: string;
+      if (this.openPositions.length > 0) {
+        outcome = `holding ${this.openPositions.length} position(s)`;
+      } else if (runtime.advisorMode) {
+        const waitMs = ADVISOR_MIN_INTERVAL_MS - (Date.now() - this.lastAdvisorCallAt);
+        outcome = this.advisorBusy
+          ? 'advisor thinking…'
+          : waitMs > 0
+          ? `advisor: next check in ${Math.ceil(waitMs / 60_000)}m`
+          : 'advisor: asking now';
         void this.maybeAskAdvisor(snap);
       } else {
         const signal = generateSignal(snap, {
@@ -181,8 +190,19 @@ export class TradeEngine extends EventEmitter {
           channelFilter: this.learned.channelFilter,
           channelTarget: this.learned.channelTarget,
         });
+        outcome = signal ? `signal ${signal.side} conf=${signal.confluence}` : 'no setup';
         if (signal) this.processSignal(signal);
       }
+
+      // Per-cycle heartbeat so the log shows the agent working every check.
+      const s15 = readStructure(snap.m15.length ? snap.m15 : snap.h1, 2);
+      const g = s15.lastSwingLow?.price;
+      const r = s15.lastSwingHigh?.price;
+      const rangePct = g && r && g > 0 ? ` range ${(((r - g) / g) * 100).toFixed(1)}%` : '';
+      logger.info(
+        `SCAN ${config.symbol} ${this.lastPx.toFixed(2)} | bias ${this.lastBias} | 15M ${s15.trend}` +
+          `${g ? ` green ${g.toFixed(2)}` : ''}${r ? ` red ${r.toFixed(2)}` : ''}${rangePct} | ${outcome}`,
+      );
 
       this.emit('update', this.state());
     } catch (err) {
