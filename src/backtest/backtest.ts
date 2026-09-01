@@ -9,6 +9,11 @@
 
 import type { Candle, Side } from '../types.js';
 import { generateSignal, type SignalOptions } from '../strategy/signal.js';
+import { generateFlipSignal, type FlipSignalOptions } from '../strategy/liquidityFlip.js';
+import { generateChannelReversalSignal, type ChannelReversalSignalOptions } from '../strategy/channelReversal.js';
+import { generateStructureTravelSignal, type StructureTravelOptions } from '../strategy/structureTravel.js';
+import { generateChochReversalSignal, type ChochReversalOptions } from '../strategy/chochReversal.js';
+import { generateHtfTravelSignal, type HtfTravelOptions } from '../strategy/htfTravel.js';
 import { resample } from './resample.js';
 
 export interface BacktestOptions {
@@ -21,7 +26,21 @@ export interface BacktestOptions {
   partial?: boolean; // scale out at the near pool, move stop to breakeven, run to draw
   scaleFrac?: number; // fraction banked at the near pool (default 0.5)
   beAtR?: number; // move stop to breakeven once price is this many R in profit (0 = off)
-  costBps?: number; // per-side trading cost (fee + slippage) in basis points; 0 = frictionless
+  costBps?: number; // taker per-side cost (fee + slippage) in bps; 0 = frictionless
+  cooldownBars?: number; // 1m bars to sit out after a trade closes before re-entering
+  makerEntry?: boolean; // enter with a resting limit at the trigger level (may not fill)
+  makerBps?: number; // maker per-side fee in bps (limit entry + limit take-profit legs)
+  fillWindowBars?: number; // how many 1m bars a maker entry limit stays live before it's abandoned
+  /** Use the trend-channel-flip + swept-EQH/EQL entry instead of the full 7-stage engine. */
+  flip?: FlipSignalOptions | false;
+  /** Use the channel-band reversal entry (LL at lower band + VWAP → HH, or mirror) instead. */
+  reversal?: ChannelReversalSignalOptions | false;
+  /** Use the 15M structure "green line → red line" travel entry (1H-gated) instead. */
+  travel?: StructureTravelOptions | false;
+  /** Use the SMC sweep→CHoCH→OB/FVG-retest reversal entry instead. */
+  choch?: ChochReversalOptions | false;
+  /** Use the HTF green→red travel entry (journal-matched: 4H/1D lines, tight structure stop). */
+  htfTravel?: HtfTravelOptions | false;
 }
 
 interface SimResult {
@@ -184,6 +203,7 @@ export function backtest(m1: Candle[], opts: BacktestOptions = {}): BacktestResu
   let m15: Candle[] = [];
   let h1: Candle[] = [];
   let h4: Candle[] = [];
+  let d1: Candle[] = [];
   let lastBucket15 = -1;
 
   for (let i = warmup; i < m1.length; i++) {
@@ -196,56 +216,102 @@ export function backtest(m1: Candle[], opts: BacktestOptions = {}): BacktestResu
     // history length — the difference between seconds and minutes on 90d of 1m.
     const b15 = Math.floor(t / (15 * 60_000));
     if (b15 !== lastBucket15) {
-      const hist = m1.slice(Math.max(0, i + 1 - 30_000), i + 1);
+      const hist = m1.slice(Math.max(0, i + 1 - 60_000), i + 1);
       m15 = resample(hist, 15);
       h1 = resample(hist, 60);
       h4 = resample(hist, 240);
+      d1 = resample(hist, 1440);
       lastBucket15 = b15;
     }
 
     const snap = {
       symbol,
-      h4: h4.slice(-120),
+      d1: d1.slice(-60),
+      h4: h4.slice(-180),
       h1: h1.slice(-200),
       m15: m15.slice(-200),
       m1: m1.slice(Math.max(0, i - 119), i + 1),
     };
 
-    const sig = generateSignal(snap, opts.signal);
+    const sig = opts.flip
+      ? generateFlipSignal(snap.m1, snap.h1, symbol, opts.flip)
+      : opts.reversal
+      ? generateChannelReversalSignal(snap.m15, symbol, opts.reversal)
+      : opts.travel
+      ? generateStructureTravelSignal(
+          { m1: snap.m1, m15: snap.m15, h1: snap.h1, h4: snap.h4, d1: snap.d1 },
+          symbol,
+          opts.travel,
+        )
+      : opts.choch
+      ? generateChochReversalSignal(
+          { m1: snap.m1, m15: snap.m15, h1: snap.h1, h4: snap.h4, d1: snap.d1 },
+          symbol,
+          opts.choch,
+        )
+      : opts.htfTravel
+      ? generateHtfTravelSignal(
+          { m1: snap.m1, m15: snap.m15, h1: snap.h1, h4: snap.h4, d1: snap.d1 },
+          symbol,
+          opts.htfTravel,
+        )
+      : generateSignal(snap, opts.signal);
     if (!sig || sig.confluence < minConf || sig.riskReward < minRR) continue;
 
-    const limit = Math.min(m1.length, i + 1 + maxHold);
-    const res = opts.partial
-      ? simulatePartial(sig, m1, i, limit, opts.scaleFrac ?? 0.5)
-      : simulateSingle(sig, m1, i, limit, opts.beAtR ?? 0);
+    // Maker entry: a resting limit at the trigger level. It only fills if a later
+    // bar trades through it inside the fill window — that's the cost of the
+    // cheaper fee (many runners never come back to the limit and are missed).
+    let entryIdx = i;
+    let fillSig = sig;
+    if (opts.makerEntry) {
+      const limitPx = sig.sweptLevel ?? sig.entry;
+      const window = Math.min(m1.length, i + 1 + (opts.fillWindowBars ?? 10));
+      let hit = -1;
+      for (let j = i + 1; j < window; j++) {
+        if (sig.side === 'long' ? m1[j].low <= limitPx : m1[j].high >= limitPx) { hit = j; break; }
+      }
+      if (hit < 0) continue; // limit never filled — no trade
+      entryIdx = hit;
+      fillSig = { ...sig, entry: limitPx };
+    }
 
-    // Trading cost in R: each fill pays costBps of notional; the stop distance is
-    // 1R, so cost/leg = (costBps/1e4)·entry / risk. Partials fill 3 times (entry,
-    // scale-out, runner), single exits twice. This is what decides a thin edge.
-    const risk = Math.abs(sig.entry - sig.stopLoss) || 1e-9;
-    const legs = opts.partial ? 3 : 2;
-    const feeR = ((opts.costBps ?? 0) / 10_000) * (sig.entry / risk) * legs;
+    const limit = Math.min(m1.length, entryIdx + 1 + maxHold);
+    const res = opts.partial
+      ? simulatePartial(fillSig, m1, entryIdx, limit, opts.scaleFrac ?? 0.5)
+      : simulateSingle(fillSig, m1, entryIdx, limit, opts.beAtR ?? 0);
+
+    // Trading cost in R. Stop distance is 1R, so a leg costs (bps/1e4)·entry/risk.
+    // Taker legs: the entry (unless maker) and any stop/timeout market exit.
+    // Maker legs: a maker limit entry, and a take-profit that rests as a limit.
+    const risk = Math.abs(fillSig.entry - fillSig.stopLoss) || 1e-9;
+    const taker = (opts.costBps ?? 0) / 10_000;
+    const maker = (opts.makerBps ?? opts.costBps ?? 0) / 10_000;
+    const perLeg = fillSig.entry / risk;
+    const entryFee = (opts.makerEntry ? maker : taker) * perLeg;
+    const exitFee = (res.outcome === 'win' ? maker : taker) * perLeg;
+    const scaleFee = opts.partial ? maker * perLeg : 0; // scale-out tags a limit
+    const feeR = entryFee + exitFee + scaleFee;
     const netR = res.rMultiple - feeR;
 
     trades.push({
-      side: sig.side,
-      entryTime: t,
-      entry: sig.entry,
-      stopLoss: sig.stopLoss,
-      takeProfit: sig.takeProfit,
+      side: fillSig.side,
+      entryTime: m1[entryIdx].time,
+      entry: fillSig.entry,
+      stopLoss: fillSig.stopLoss,
+      takeProfit: fillSig.takeProfit,
       exit: res.exit,
       rMultiple: round(netR, 2),
       outcome: res.outcome,
-      confluence: sig.confluence,
-      drawTimeframe: sig.drawTimeframe,
-      barsHeld: res.exitIdx - i,
-      stopPct: round((Math.abs(sig.entry - sig.stopLoss) / sig.entry) * 100, 3),
+      confluence: fillSig.confluence,
+      drawTimeframe: fillSig.drawTimeframe,
+      barsHeld: res.exitIdx - entryIdx,
+      stopPct: round((Math.abs(fillSig.entry - fillSig.stopLoss) / fillSig.entry) * 100, 3),
       mfeR: round(res.mfeR, 2),
       maeR: round(res.maeR, 2),
       reachedNear: res.reachedNear,
     });
 
-    i = res.exitIdx; // one position at a time — no overlapping trades
+    i = res.exitIdx + (opts.cooldownBars ?? 0); // one position at a time, then sit out the cooldown
   }
 
   return { stats: summarize(trades), trades };

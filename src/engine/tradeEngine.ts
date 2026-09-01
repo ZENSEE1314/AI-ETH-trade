@@ -24,6 +24,12 @@ import { openPaperPosition, evaluatePosition, closePosition } from '../exchange/
 import { placeLiveOrder } from '../exchange/bitunix.js';
 import { loadSnapshot, snapshotFromM1, lastPrice } from './marketData.js';
 import { Journal } from './journal.js';
+import { resample } from '../backtest/resample.js';
+import { buildContext } from '../advisor/context.js';
+import { askAdvisor } from '../advisor/advisor.js';
+import { randomUUID } from 'node:crypto';
+
+const ADVISOR_MIN_INTERVAL_MS = Number(process.env.ADVISOR_MIN_INTERVAL_MS ?? 15 * 60_000);
 
 export interface EngineState {
   running: boolean;
@@ -71,6 +77,8 @@ export class TradeEngine extends EventEmitter {
   // source). Once it has enough history it drives the engine instead of the
   // exchange fetch — the higher timeframes are resampled from it.
   private liveM1: Candle[] = [];
+  private lastAdvisorCallAt = 0;
+  private advisorBusy = false;
 
   /** Base equity comes from settings so it reflects UI changes on restart. */
   get startEquity(): number {
@@ -163,13 +171,18 @@ export class TradeEngine extends EventEmitter {
       this.manageOpenPositions(snap);
       this.maybeRelearn();
 
-      const signal = generateSignal(snap, {
-        ...this.learned.signal,
-        liqProximityPct: this.learned.liqProximityPct,
-        channelFilter: this.learned.channelFilter,
-        channelTarget: this.learned.channelTarget,
-      });
-      if (signal) this.processSignal(signal);
+      if (runtime.advisorMode) {
+        // The LLM advisor is the trader — it decides entry / stop / target.
+        void this.maybeAskAdvisor(snap);
+      } else {
+        const signal = generateSignal(snap, {
+          ...this.learned.signal,
+          liqProximityPct: this.learned.liqProximityPct,
+          channelFilter: this.learned.channelFilter,
+          channelTarget: this.learned.channelTarget,
+        });
+        if (signal) this.processSignal(signal);
+      }
 
       this.emit('update', this.state());
     } catch (err) {
@@ -212,6 +225,59 @@ export class TradeEngine extends EventEmitter {
     }
     if (this.liveM1.length > LIVE_FEED_CAP) this.liveM1 = this.liveM1.slice(-LIVE_FEED_CAP);
     return { accepted, total: this.liveM1.length, ready: this.liveM1.length >= LIVE_FEED_MIN };
+  }
+
+  /**
+   * Advisor mode: hand the market to the LLM and let it make the call. Throttled
+   * (ADVISOR_MIN_INTERVAL_MS, default 15m) and skipped while a position is open,
+   * so free-tier API limits are respected. Non-blocking — the call runs while
+   * the cycle continues.
+   */
+  private async maybeAskAdvisor(snap: MarketSnapshot): Promise<void> {
+    if (this.advisorBusy || this.openPositions.length > 0) return;
+    if (Date.now() - this.lastAdvisorCallAt < ADVISOR_MIN_INTERVAL_MS) return;
+    this.advisorBusy = true;
+    this.lastAdvisorCallAt = Date.now();
+    try {
+      const d1 = this.klineBuffer.length > 1440 ? resample(this.klineBuffer, 1440) : resample(snap.m1, 1440);
+      const context = buildContext({
+        symbol: snap.symbol,
+        d1: d1.slice(-60),
+        h4: snap.h4.slice(-120),
+        h1: snap.h1.slice(-250),
+        m15: snap.m15.slice(-200),
+        m1: snap.m1.slice(-250),
+      });
+      const rec = await askAdvisor(context);
+      logger.info(`Advisor [${rec.model}]: ${rec.verdict.toUpperCase()} (${rec.confidence}) — ${rec.reasoning.slice(0, 180)}`);
+      if (rec.verdict === 'wait') return;
+      if (rec.stopLoss == null || rec.takeProfit == null) {
+        logger.warn('Advisor gave a direction but no stop/target — skipping.');
+        return;
+      }
+      const entry = rec.entry ?? this.lastPx;
+      const risk = Math.abs(entry - rec.stopLoss);
+      const reward = Math.abs(rec.takeProfit - entry);
+      const signal: Signal = {
+        id: randomUUID(),
+        time: Date.now(),
+        symbol: snap.symbol,
+        side: rec.verdict,
+        entry: round(entry, 2),
+        stopLoss: round(rec.stopLoss, 2),
+        takeProfit: round(rec.takeProfit, 2),
+        riskReward: risk > 0 ? round(reward / risk, 2) : 0,
+        // Advisor IS the confluence check — clamp so the engine gate passes.
+        confluence: Math.max(rec.confidence, runtime.minConfluence),
+        source: 'engine',
+        reasons: [`ADVISOR: ${rec.reasoning}`, ...rec.warnings.map((w) => `⚠ ${w}`)],
+      };
+      this.processSignal(signal);
+    } catch (err) {
+      logger.warn(`Advisor call failed: ${(err as Error).message}`);
+    } finally {
+      this.advisorBusy = false;
+    }
   }
 
   /** Online self-learning: after enough closed trades, retune on the buffer. */

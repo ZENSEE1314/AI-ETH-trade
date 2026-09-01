@@ -133,6 +133,19 @@
               <label for="minConfluence">Min Confluence (0–100)</label>
               <input type="number" id="minConfluence" name="minConfluence" min="0" max="100" step="1" />
             </div>
+            <div class="field">
+              <label for="positionSizePct">Position Size (% of equity as margin)</label>
+              <input type="number" id="positionSizePct" name="positionSizePct" min="0" max="100" step="1" />
+              <span class="hint">0 = size by Risk Per Trade instead. 10 = commit 10% of equity as margin each trade.</span>
+            </div>
+            <div class="field">
+              <label for="advisorMode">AI Advisor Mode</label>
+              <select id="advisorMode" name="advisorMode">
+                <option value="false">Off — engine strategy decides</option>
+                <option value="true">On — LLM picks entry / stop / target</option>
+              </select>
+              <span class="hint">The AI is asked at most every 15 min, and never while a position is open.</span>
+            </div>
             <div class="live-warning" id="liveWarning">
               ⚠️ Live mode places real leveraged orders. At high leverage a ~2% adverse move can liquidate you. Start with tiny size.
             </div>

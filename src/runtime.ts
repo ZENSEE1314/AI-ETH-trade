@@ -17,6 +17,8 @@ interface StoredSettings {
   maxDailyLossPct: number;
   minConfluence: number;
   accountEquityUsdt: number;
+  positionSizePct: number;
+  advisorMode: boolean;
 }
 
 // In-memory effective settings (apiSecret held decrypted for signing requests).
@@ -30,6 +32,10 @@ export const runtime = {
   minConfluence: config.minConfluence,
   minRiskReward: config.minRiskReward, // learnable gate (see learning/)
   accountEquityUsdt: config.accountEquityUsdt,
+  // Fixed sizing: commit this % of equity as margin per trade (0 = risk-based).
+  positionSizePct: config.positionSizePct,
+  // Let the LLM advisor make the call (entry/stop/target) instead of the engine.
+  advisorMode: config.advisorMode,
 };
 
 export function canTradeLive(): boolean {
@@ -48,6 +54,8 @@ export function loadSettings(): void {
   runtime.maxDailyLossPct = pos(s.maxDailyLossPct, runtime.maxDailyLossPct);
   runtime.minConfluence = pos(s.minConfluence, runtime.minConfluence);
   runtime.accountEquityUsdt = pos(s.accountEquityUsdt, runtime.accountEquityUsdt);
+  if (typeof s.positionSizePct === 'number' && s.positionSizePct >= 0) runtime.positionSizePct = s.positionSizePct;
+  if (typeof s.advisorMode === 'boolean') runtime.advisorMode = s.advisorMode;
   logger.info(`Settings loaded (mode=${runtime.tradingMode}, apiKey=${runtime.apiKey ? 'set' : 'unset'}).`);
 }
 
@@ -60,6 +68,8 @@ export interface SettingsUpdate {
   maxDailyLossPct?: number;
   minConfluence?: number;
   accountEquityUsdt?: number;
+  positionSizePct?: number;
+  advisorMode?: boolean;
 }
 
 /** Apply a settings update from the UI and persist it. */
@@ -72,6 +82,8 @@ export function updateSettings(u: SettingsUpdate): void {
   if (u.maxDailyLossPct !== undefined) runtime.maxDailyLossPct = pos(u.maxDailyLossPct, runtime.maxDailyLossPct);
   if (u.minConfluence !== undefined) runtime.minConfluence = clamp(u.minConfluence, 0, 100, runtime.minConfluence);
   if (u.accountEquityUsdt !== undefined) runtime.accountEquityUsdt = pos(u.accountEquityUsdt, runtime.accountEquityUsdt);
+  if (u.positionSizePct !== undefined) { const n = Number(u.positionSizePct); if (Number.isFinite(n) && n >= 0 && n <= 100) runtime.positionSizePct = n; }
+  if (u.advisorMode !== undefined) runtime.advisorMode = !!u.advisorMode;
   persist();
   logger.info(`Settings updated (mode=${runtime.tradingMode}, live=${canTradeLive()}).`);
 }
@@ -88,6 +100,8 @@ export function publicSettings() {
     maxDailyLossPct: runtime.maxDailyLossPct,
     minConfluence: runtime.minConfluence,
     accountEquityUsdt: runtime.accountEquityUsdt,
+    positionSizePct: runtime.positionSizePct,
+    advisorMode: runtime.advisorMode,
   };
 }
 
@@ -101,6 +115,8 @@ function persist(): void {
     maxDailyLossPct: runtime.maxDailyLossPct,
     minConfluence: runtime.minConfluence,
     accountEquityUsdt: runtime.accountEquityUsdt,
+    positionSizePct: runtime.positionSizePct,
+    advisorMode: runtime.advisorMode,
   };
   writeJson('settings', stored);
 }

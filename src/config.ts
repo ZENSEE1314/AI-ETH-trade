@@ -27,6 +27,10 @@ export const config = {
   accountEquityUsdt: num('ACCOUNT_EQUITY_USDT', 1000),
   leverage: num('LEVERAGE', 50),
   riskPerTradePct: num('RISK_PER_TRADE_PCT', 1.0),
+  // Fixed sizing: commit this % of equity as margin per trade. 0 = risk-based.
+  positionSizePct: num('POSITION_SIZE_PCT', 0),
+  // Let the LLM advisor decide entries/stops/targets instead of the engine.
+  advisorMode: (process.env.ADVISOR_MODE ?? '').toLowerCase() === 'true',
   maxDailyLossPct: num('MAX_DAILY_LOSS_PCT', 3.0),
   maxWeeklyLossPct: num('MAX_WEEKLY_LOSS_PCT', 8.0),
   minRiskReward: num('MIN_RISK_REWARD', 2.0),

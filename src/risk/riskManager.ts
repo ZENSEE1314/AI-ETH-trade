@@ -80,19 +80,42 @@ export function assessRisk(signal: Signal, ctx: RiskContext): RiskDecision {
     );
   }
 
-  // --- Position sizing (risk-based, leverage-independent for loss size) -------
-  const riskUsdt = ctx.equityUsdt * (runtime.riskPerTradePct / 100);
-  const positionSizeContracts = riskUsdt / stopDistance; // ETH units
+  // --- Position sizing ------------------------------------------------------
+  // Two modes:
+  //   fixed   (positionSizePct > 0): commit that % of equity as MARGIN — the
+  //           notional is margin × leverage, and the $ risk is whatever the
+  //           stop distance implies (can be large — the caps below are the net).
+  //   risk    (default): size so a stop-out loses exactly riskPerTradePct of
+  //           equity, regardless of how far the stop sits.
+  let positionSizeContracts: number;
+  let marginUsdt: number;
+  let riskUsdt: number;
+  if (runtime.positionSizePct > 0) {
+    marginUsdt = ctx.equityUsdt * (runtime.positionSizePct / 100);
+    const notionalUsdt = marginUsdt * runtime.leverage;
+    positionSizeContracts = notionalUsdt / signal.entry;
+    riskUsdt = positionSizeContracts * stopDistance;
+  } else {
+    riskUsdt = ctx.equityUsdt * (runtime.riskPerTradePct / 100);
+    positionSizeContracts = riskUsdt / stopDistance;
+    marginUsdt = (positionSizeContracts * signal.entry) / runtime.leverage;
+  }
   const notionalUsdt = positionSizeContracts * signal.entry;
-  const marginUsdt = notionalUsdt / runtime.leverage;
 
   if (marginUsdt > ctx.equityUsdt) {
     return reject(`Required margin ${marginUsdt.toFixed(2)} exceeds equity ${ctx.equityUsdt.toFixed(2)}.`);
   }
+  // Fixed-size sanity: never let one trade's stop-out exceed the daily cap.
+  if (riskUsdt > dailyLossLimit) {
+    return reject(
+      `Fixed sizing puts ${riskUsdt.toFixed(2)} USDT at risk on this stop — over the daily cap ` +
+        `(${dailyLossLimit.toFixed(2)}). Widen the stop, cut position size %, or lower leverage. Rejected.`,
+    );
+  }
 
   return {
     approved: true,
-    reason: `Approved: risk ${riskUsdt.toFixed(2)} USDT, size ${positionSizeContracts.toFixed(4)} ETH, R:R ${signal.riskReward}.`,
+    reason: `Approved: ${runtime.positionSizePct > 0 ? `margin ${marginUsdt.toFixed(2)} (${runtime.positionSizePct}%)` : `risk ${riskUsdt.toFixed(2)}`} USDT, size ${positionSizeContracts.toFixed(4)}, R:R ${signal.riskReward}.`,
     positionSizeContracts: round(positionSizeContracts, 4),
     notionalUsdt: round(notionalUsdt, 2),
     marginUsdt: round(marginUsdt, 2),

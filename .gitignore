@@ -6,3 +6,4 @@ dist/
 data/*.json
 !data/.gitkeep
 .DS_Store
+tradingview-mcp/

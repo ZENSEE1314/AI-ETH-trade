@@ -204,13 +204,14 @@ $('logoutBtn').addEventListener('click', async () => {
 });
 
 // --- Settings -------------------------------------------------------------
-const settingsFields = ['tradingMode', 'accountEquityUsdt', 'leverage', 'riskPerTradePct', 'maxDailyLossPct', 'minConfluence'];
+const settingsFields = ['tradingMode', 'accountEquityUsdt', 'leverage', 'riskPerTradePct', 'maxDailyLossPct', 'minConfluence', 'positionSizePct', 'advisorMode'];
+const textFields = new Set(['tradingMode', 'advisorMode']); // sent as-is, not Number()
 
 async function loadSettings() {
   const res = await fetch(`/api/settings${qs}`, { headers: authHeaders });
   if (onUnauthorized(res)) return;
   const s = await res.json();
-  settingsFields.forEach((k) => { if ($(k) && s[k] !== undefined) $(k).value = s[k]; });
+  settingsFields.forEach((k) => { if ($(k) && s[k] !== undefined) $(k).value = String(s[k]); });
   $('apiKey').value = '';
   $('apiKey').placeholder = s.apiKeyMasked ? `current: ${s.apiKeyMasked}` : 'paste your API key';
   $('apiKeyHint').textContent = s.apiKeyMasked ? 'A key is set. Leave blank to keep it.' : 'No API key set yet.';
@@ -223,7 +224,11 @@ $('settingsForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const msg = $('settingsMsg');
   const payload = {};
-  settingsFields.forEach((k) => { const v = $(k).value; if (v !== '') payload[k] = k === 'tradingMode' ? v : Number(v); });
+  settingsFields.forEach((k) => {
+    const v = $(k).value;
+    if (v === '') return;
+    payload[k] = k === 'advisorMode' ? v === 'true' : textFields.has(k) ? v : Number(v);
+  });
   if ($('apiKey').value.trim() !== '') payload.apiKey = $('apiKey').value.trim();
   if ($('apiSecret').value !== '') payload.apiSecret = $('apiSecret').value;
 

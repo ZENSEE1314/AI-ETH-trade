@@ -74,6 +74,12 @@ export interface SignalOptions {
    *  LH short) → the 15M HL/LH → a confirmed 1M entry on the next candle → with
    *  price near the VWAP line or outside a band. Every step is a hard gate. */
   chain?: boolean;
+  /** Which timeframe times the actual trigger: '1m' (default) drills down to the
+   *  1M reaction swing + candle confirm; '15m' enters right off the 15M HL/LH
+   *  itself, skipping the 1M drill-down entirely (fewer, earlier entries; wider
+   *  stops since it's timed off a bigger pivot). Execution/backtest simulation
+   *  is always on 1m bars either way — only the entry TIMING changes. */
+  entryMode?: '1m' | '15m';
 }
 
 const VWAP_NEAR_PCT = 0.2; // "near VWAP": within this % of the VWAP line
@@ -234,24 +240,31 @@ export function generateSignal(snap: MarketSnapshot, opts: SignalOptions = {}): 
     }
   }
 
-  // 6. ENTRY (1M) — the reaction swing that times the trigger + candle confirm.
-  const entrySwing = lastReactionSwing(entryTf, side) ?? setupSwing;
-  const lastCandle = analyzeCandle(entryTf.at(-1)!);
+  // 6. ENTRY — the reaction swing that times the trigger + candle confirm.
+  // entryMode picks which timeframe's swing/candle IS the trigger: '1m' drills
+  // down to the 1M reaction swing (tight stop, more trades); '15m' enters right
+  // off the setup-TF (15M) swing itself, skipping the drill-down (fewer, earlier
+  // entries, wider stop). Either way the position is simulated on 1m bars.
+  const entryMode = opts.entryMode ?? '1m';
+  const triggerTf = entryMode === '15m' ? setup : entryTf;
+  const triggerLabel = entryMode === '15m' ? '15M' : '1M';
+  const entrySwing = entryMode === '15m' ? setupSwing : (lastReactionSwing(entryTf, side) ?? setupSwing);
+  const lastCandle = analyzeCandle(triggerTf.at(-1)!);
   const candleConfirms =
     (side === 'long' && (lastCandle.bullish || lastCandle.rejection === 'bottom')) ||
     (side === 'short' && (lastCandle.bearish || lastCandle.rejection === 'top'));
-  if (opts.chain && !candleConfirms) return null; // chain: the 1M next candle must confirm
+  if (opts.chain && !candleConfirms) return null; // chain: the trigger-TF next candle must confirm
   if (candleConfirms) {
     confluence += WEIGHTS.entry;
     reasons.push(
-      `ENTRY: 1M ${side === 'long' ? 'HL' : 'LH'} @ ${entrySwing.swing.price.toFixed(2)}, candle confirms (${lastCandle.strength})`,
+      `ENTRY: ${triggerLabel} ${side === 'long' ? 'HL' : 'LH'} @ ${entrySwing.swing.price.toFixed(2)}, candle confirms (${lastCandle.strength})`,
     );
   } else {
     confluence += WEIGHTS.entry * 0.4;
-    reasons.push(`ENTRY: 1M ${side === 'long' ? 'HL' : 'LH'} @ ${entrySwing.swing.price.toFixed(2)}, awaiting candle confirmation`);
+    reasons.push(`ENTRY: ${triggerLabel} ${side === 'long' ? 'HL' : 'LH'} @ ${entrySwing.swing.price.toFixed(2)}, awaiting candle confirmation`);
   }
 
-  // CHAIN step — VWAP: the 1M entry must be near the VWAP line or outside a band.
+  // CHAIN step — VWAP: the entry must be near the VWAP line or outside a band.
   if (opts.chain) {
     const v = readVwap(entryTf);
     const px = entryTf.at(-1)!.close;

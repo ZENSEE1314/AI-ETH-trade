@@ -1,0 +1,138 @@
+//@version=6
+// =============================================================================
+// AI-ETH-trade · Green→Red Travel Strategy  (v2 — HTF structure, journal-matched)
+// Built to match a manual trade journal whose trades:
+//   · enter AT a structure level (green line for a long, red line for a short)
+//   · stop just PAST that level (~0.5%)  — if it breaks you're wrong, fast+cheap
+//   · target the OPPOSITE structure level (~2% away)
+//   · read structure on the DAILY / 4H (levels 2%+ apart), hold hours→days
+//
+// v1 read 15M 2-bar pivots (green/red ~0.6% apart) and scalped the spread — 25%
+// win rate. This reads structure via request.security (lookahead_off, confirmed
+// pivots — no repaint) and only trades ranges worth the fees.
+//
+// Run on a 1H or 4H chart. Set commission to your real taker fee. TradingView's
+// free Strategy Tester only backtests the loaded bars — use Deep Backtest (paid)
+// or scroll far back for a real sample.
+// =============================================================================
+strategy("Green Red Travel", overlay = true, max_lines_count = 300,
+     initial_capital = 1000, default_qty_type = strategy.percent_of_equity, default_qty_value = 10,
+     commission_type = strategy.commission.percent, commission_value = 0.055,
+     slippage = 2, pyramiding = 0, process_orders_on_close = true)
+
+// ------------------------------------------------------------------- Inputs --
+grpMS = "Structure"
+structTf = input.timeframe("D", "Structure timeframe (green/red lines)", group = grpMS)
+ctxTf    = input.timeframe("D", "Context timeframe", group = grpMS)
+pivLen   = input.int(2, "Pivot lookback", minval = 2, group = grpMS)
+
+grpEntry = "Entry / Risk"
+entryTolPct  = input.float(0.50, "Enter within this % of the line", step = 0.05, group = grpEntry)
+stopPastPct  = input.float(0.50, "Stop this % past the line", step = 0.05, group = grpEntry)
+minRangePct  = input.float(1.20, "Skip if green→red range < this % of price", step = 0.1, group = grpEntry)
+maxRangePct  = input.float(12.0, "Skip if range > this % of price", step = 0.5, group = grpEntry)
+minRR        = input.float(2.0, "Min Risk:Reward", step = 0.1, group = grpEntry)
+needReaction = input.bool(true, "Require a reaction candle at the line", group = grpEntry)
+strictCtx    = input.bool(false, "Context TF must match direction (not just 'not opposed')", group = grpEntry)
+sweepFirst   = input.bool(false, "Require a sweep + reclaim of the prior line first", group = grpEntry)
+sweepBars    = input.int(30, "Sweep lookback (chart bars)", minval = 5, group = grpEntry)
+cooldownBars = input.int(8, "Min chart bars between trades", minval = 0, group = grpEntry)
+allowLong    = input.bool(true, "Allow longs", group = grpEntry)
+allowShort   = input.bool(true, "Allow shorts", group = grpEntry)
+
+// ---------------------------------------------------- Structure on the HTF ---
+f_struct(simple int len) =>
+    h = ta.pivothigh(len, len)
+    l = ta.pivotlow(len, len)
+    var float rh1 = na
+    var float rh2 = na
+    var float gl1 = na
+    var float gl2 = na
+    if not na(h)
+        rh2 := rh1
+        rh1 := h
+    if not na(l)
+        gl2 := gl1
+        gl1 := l
+    [gl1, gl2, rh1, rh2]
+
+f_trend(simple int len) =>
+    h = ta.pivothigh(len, len)
+    l = ta.pivotlow(len, len)
+    var float rh1 = na
+    var float rh2 = na
+    var float gl1 = na
+    var float gl2 = na
+    if not na(h)
+        rh2 := rh1
+        rh1 := h
+    if not na(l)
+        gl2 := gl1
+        gl1 := l
+    ok = not na(rh2) and not na(gl2)
+    up = ok and rh1 > rh2 and gl1 > gl2
+    dn = ok and rh1 < rh2 and gl1 < gl2
+    up ? 1 : dn ? -1 : 0
+
+[greenLine, greenPrev, redLine, redPrev] = request.security(syminfo.tickerid, structTf, f_struct(pivLen), lookahead = barmerge.lookahead_off)
+ctxTrend = request.security(syminfo.tickerid, ctxTf, f_trend(pivLen), lookahead = barmerge.lookahead_off)
+
+ready = not na(greenLine) and not na(greenPrev) and not na(redLine) and not na(redPrev)
+bull  = ready and redLine > redPrev and greenLine > greenPrev
+bear  = ready and redLine < redPrev and greenLine < greenPrev
+
+ctxOkLong  = strictCtx ? ctxTrend > 0 : ctxTrend >= 0
+ctxOkShort = strictCtx ? ctxTrend < 0 : ctxTrend <= 0
+
+// ---------------------------------------------------------------- Sweep -------
+lowN  = ta.lowest(low, sweepBars)
+highN = ta.highest(high, sweepBars)
+sweptLow  = not na(greenPrev) and lowN  <= greenPrev and close > greenPrev
+sweptHigh = not na(redPrev)   and highN >= redPrev   and close < redPrev
+
+// -------------------------------------------------------- Reaction candle ----
+reactLong  = not needReaction or (close > open and close > close[1])
+reactShort = not needReaction or (close < open and close < close[1])
+
+// -------------------------------------------------------------- Cooldown -----
+closedChg = ta.change(strategy.closedtrades) != 0
+openChg   = ta.change(strategy.opentrades) != 0
+var int lastTradeBar = na
+if closedChg or openChg
+    lastTradeBar := bar_index
+coolOk = na(lastTradeBar) or (bar_index - lastTradeBar) >= cooldownBars
+
+// -------------------------------------------------------------- Setups -------
+rng    = redLine - greenLine
+rngPct = ready and greenLine > 0 ? rng / greenLine * 100 : 0.0
+rangeOk = rngPct >= minRangePct and rngPct <= maxRangePct
+
+nearGreen = ready and close >= greenLine and (close - greenLine) / close * 100 <= entryTolPct
+nearRed   = ready and close <= redLine   and (redLine - close) / close * 100 <= entryTolPct
+
+longOk  = allowLong  and bull and rangeOk and nearGreen and ctxOkLong  and coolOk and reactLong  and (not sweepFirst or sweptLow)  and barstate.isconfirmed
+shortOk = allowShort and bear and rangeOk and nearRed   and ctxOkShort and coolOk and reactShort and (not sweepFirst or sweptHigh) and barstate.isconfirmed
+
+lSL = greenLine * (1 - stopPastPct / 100)
+lTP = redLine
+sSL = redLine * (1 + stopPastPct / 100)
+sTP = greenLine
+
+lRR = close - lSL > 0 ? (lTP - close) / (close - lSL) : 0.0
+sRR = sSL - close > 0 ? (close - sTP) / (sSL - close) : 0.0
+
+// ------------------------------------------------------------------ Orders ---
+if longOk and strategy.position_size == 0 and lRR >= minRR
+    strategy.entry("L", strategy.long)
+    strategy.exit("Lx", "L", stop = lSL, limit = lTP)
+
+if shortOk and strategy.position_size == 0 and sRR >= minRR
+    strategy.entry("S", strategy.short)
+    strategy.exit("Sx", "S", stop = sSL, limit = sTP)
+
+// ------------------------------------------------------------------- Plots ---
+plot(ready ? greenLine : na, "Green line", color.new(color.green, 0), 2, plot.style_linebr)
+plot(ready ? redLine   : na, "Red line",   color.new(color.red,   0), 2, plot.style_linebr)
+bgcolor(bull and rangeOk ? color.new(color.green, 92) : bear and rangeOk ? color.new(color.red, 92) : na)
+plotshape(longOk  and strategy.position_size == 0 and lRR >= minRR, "long",  shape.triangleup,   location.belowbar, color.new(color.green, 0), size = size.tiny)
+plotshape(shortOk and strategy.position_size == 0 and sRR >= minRR, "short", shape.triangledown, location.abovebar, color.new(color.red,   0), size = size.tiny)
