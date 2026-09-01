@@ -13,6 +13,7 @@ import type { Candle } from '../types.js';
 
 const BYBIT_BASE = 'https://api.bybit.com';
 const MINUTE = 60_000;
+const FETCH_TIMEOUT_MS = 8000; // don't let a blocked datacenter egress hang the caller
 
 export async function fetchBybitKlines(
   symbol: string,
@@ -28,7 +29,7 @@ export async function fetchBybitKlines(
     const url =
       `${BYBIT_BASE}/v5/market/kline?category=${category}` +
       `&symbol=${symbol}&interval=1&end=${cursorEnd}&limit=1000`;
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (!res.ok) throw new Error(`Bybit HTTP ${res.status} for ${symbol}`);
     const json: any = await res.json();
     if (json?.retCode !== 0) throw new Error(`Bybit retCode ${json?.retCode}: ${json?.retMsg}`);

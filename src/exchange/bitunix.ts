@@ -11,12 +11,20 @@ import { logger } from '../logger.js';
 
 const BASE_URL = 'https://fapi.bitunix.com';
 
+// Bitunix can be egress-blocked from some datacenters and then the socket hangs
+// open with no response. Without this cap loadSnapshot's Promise.all never
+// settles and the whole analysis loop stalls silently.
+const MARKET_FETCH_TIMEOUT_MS = 8000;
+
 /** Map our timeframe labels to Bitunix interval strings. */
 export type Interval = '1m' | '15m' | '1h' | '4h' | '1d';
 
 export async function fetchKlines(symbol: string, interval: Interval, limit = 200): Promise<Candle[]> {
   const url = `${BASE_URL}/api/v1/futures/market/kline?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-  const res = await fetch(url, { headers: { 'Content-Type': 'application/json' } });
+  const res = await fetch(url, {
+    headers: { 'Content-Type': 'application/json' },
+    signal: AbortSignal.timeout(MARKET_FETCH_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`Bitunix klines ${interval} HTTP ${res.status}`);
   const json: any = await res.json();
   const rows: any[] = json?.data ?? [];

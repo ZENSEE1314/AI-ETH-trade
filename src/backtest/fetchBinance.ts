@@ -10,6 +10,7 @@ import type { Candle } from '../types.js';
 const SPOT_BASE = 'https://data-api.binance.vision';
 const FUTURES_BASE = 'https://fapi.binance.com'; // futures has no public vision mirror
 const MINUTE = 60_000;
+const FETCH_TIMEOUT_MS = 8000; // don't let a blocked datacenter egress hang the caller
 
 export async function fetchBinanceKlines(
   symbol: string,
@@ -25,7 +26,7 @@ export async function fetchBinanceKlines(
 
   while (cursorStart < end) {
     const url = `${base}${path}?symbol=${symbol}&interval=1m&startTime=${cursorStart}&limit=1000`;
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (!res.ok) throw new Error(`Binance HTTP ${res.status} for ${symbol}`);
     const list: any[] = await res.json();
     if (!Array.isArray(list) || list.length === 0) break;

@@ -80,6 +80,7 @@ export class TradeEngine extends EventEmitter {
   private liveM1: Candle[] = [];
   private lastAdvisorCallAt = 0;
   private advisorBusy = false;
+  private cycleBusy = false; // guards against interval ticks stacking on a slow cycle
 
   /** Base equity comes from settings so it reflects UI changes on restart. */
   get startEquity(): number {
@@ -155,6 +156,11 @@ export class TradeEngine extends EventEmitter {
 
   /** One analysis + management cycle. */
   async cycle(): Promise<void> {
+    if (this.cycleBusy) {
+      logger.warn('Cycle skipped — previous cycle still running.');
+      return;
+    }
+    this.cycleBusy = true;
     try {
       // Prefer the live TradingView feed once it has enough history; otherwise
       // fall back to the exchange fetch. This lets the engine run purely off a
@@ -207,6 +213,8 @@ export class TradeEngine extends EventEmitter {
       this.emit('update', this.state());
     } catch (err) {
       logger.error(`Cycle error: ${(err as Error).message}`);
+    } finally {
+      this.cycleBusy = false;
     }
   }
 
