@@ -7,6 +7,7 @@ import { readStructure } from '../strategy/structure.js';
 import { buildMtfLiquidityMap } from '../strategy/mtfLiquidity.js';
 import { computeVwap, todaysCandles } from '../strategy/vwap.js';
 import { analyzeCandle } from '../strategy/candles.js';
+import { fetchHeadlines, formatHeadlines } from './news.js';
 
 export interface AdvisorSnapshot {
   symbol: string;
@@ -32,7 +33,7 @@ function structLine(name: string, c: Candle[], lb = 2): string {
   return parts.join('  ·  ');
 }
 
-export function buildContext(snap: AdvisorSnapshot): string {
+export async function buildContext(snap: AdvisorSnapshot, opts: { news?: boolean } = {}): Promise<string> {
   const { d1, h4, h1, m15, m1 } = snap;
   const px = m1.at(-1)?.close ?? m15.at(-1)!.close;
   const lines: string[] = [];
@@ -90,6 +91,16 @@ export function buildContext(snap: AdvisorSnapshot): string {
       `  ${t}  ${c.open.toFixed(1)}/${c.high.toFixed(1)}/${c.low.toFixed(1)}/${c.close.toFixed(1)}  ` +
         `${(c.volume / (avgVol || 1)).toFixed(1)}×  ${a.bullish ? 'bull' : a.bearish ? 'bear' : 'doji'} ${a.strength}${a.rejection ? ` rej-${a.rejection}` : ''}`,
     );
+  }
+
+  // Recent news — the advisor reads it against the liquidity map above.
+  if (opts.news !== false) {
+    try {
+      lines.push('');
+      lines.push(formatHeadlines(await fetchHeadlines(12)));
+    } catch {
+      lines.push('', 'NEWS: (feed unavailable)');
+    }
   }
 
   return lines.join('\n');

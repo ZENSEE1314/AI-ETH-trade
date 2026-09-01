@@ -240,7 +240,7 @@ export class TradeEngine extends EventEmitter {
     this.lastAdvisorCallAt = Date.now();
     try {
       const d1 = this.klineBuffer.length > 1440 ? resample(this.klineBuffer, 1440) : resample(snap.m1, 1440);
-      const context = buildContext({
+      const context = await buildContext({
         symbol: snap.symbol,
         d1: d1.slice(-60),
         h4: snap.h4.slice(-120),

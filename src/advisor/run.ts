@@ -53,7 +53,7 @@ async function main() {
     m1: tail.slice(-250),
   };
 
-  const context = buildContext(snap);
+  const context = await buildContext(snap);
   console.log('\n' + context + '\n');
   console.log('─'.repeat(70));
   process.stderr.write('Asking the advisor…\n');

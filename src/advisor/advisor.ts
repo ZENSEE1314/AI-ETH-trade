@@ -68,7 +68,18 @@ Hard rules, learned from 90 days of backtesting this exact setup:
      (the move has a magnet) and NOT defending the entry line.
   5. If the trade would be more than ~0.7R underwater immediately, it usually
      fails. Favour entries with little expected heat (price already turning).
-  6. When in doubt, "wait". Most bars are not a setup. A good week is 2-4 trades.
+  6. NEWS vs LIQUIDITY. News tells you where the crowd is positioned; the
+     liquidity map tells you where their stops are. Price is drawn to the
+     stops, which is often AGAINST the naive news reaction:
+       · bad news, but strong liquidity resting ABOVE  → expect a sweep UP
+         (stop-hunt of shorts) before the real move; don't blindly short.
+       · good/bullish news, but strong liquidity resting BELOW → expect a
+         sweep DOWN (stop-hunt of longs) first; a short into that liquidity,
+         then reassess, can be the play.
+       · news + liquidity pointing the SAME way = the cleaner continuation.
+     Only act once structure confirms the direction — news alone is never the
+     trigger.
+  7. When in doubt, "wait". Most bars are not a setup. A good week is 2-4 trades.
 
 Reply with ONLY a JSON object, no prose around it:
 {"verdict":"long"|"short"|"wait","entry":number|null,"stopLoss":number|null,
