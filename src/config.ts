@@ -39,6 +39,11 @@ export const config = {
   // Strategy
   minConfluence: num('MIN_CONFLUENCE', 60),
   analysisIntervalMs: num('ANALYSIS_INTERVAL_MS', 60000),
+  // Entry trigger timeframe: '1m' drills to the 1M reaction swing (tight stop,
+  // more trades — often too many after fees); '15m' enters off the 15M HL/LH.
+  entryMode: (str('ENTRY_MODE', '1m') === '15m' ? '15m' : '1m') as '1m' | '15m',
+  targetMode: (str('TARGET_MODE', 'draw') === 'near' ? 'near' : 'draw') as 'near' | 'draw',
+  stopMode: (str('STOP_MODE', 'swing') === 'sweep' ? 'sweep' : 'swing') as 'swing' | 'sweep',
 
   // Integrations
   webhookSecret: str('WEBHOOK_SECRET', ''),

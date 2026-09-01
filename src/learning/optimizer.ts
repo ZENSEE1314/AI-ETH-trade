@@ -95,7 +95,7 @@ export function optimize(
                   costBps,
                 });
                 const params: LearnedParams = {
-                  signal: { targetMode, stopMode },
+                  signal: { targetMode, stopMode, entryMode: '1m' },
                   minConfluence,
                   minRiskReward,
                   liqProximityPct,
