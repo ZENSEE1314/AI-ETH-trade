@@ -2,11 +2,13 @@
 // stats that reveal whether the edge is real: win rate, expectancy, avg R,
 // profit factor, max drawdown.
 
-import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
 import type { Trade } from '../types.js';
+import { readJson, writeJson } from '../store.js';
 
-const DATA_FILE = 'data/journal.json';
+// Persisted via the shared store so it lands under config.dataDir — the mounted
+// volume on Railway. A hardcoded 'data/' path here would be the container's
+// ephemeral disk and every redeploy would wipe the trade history.
+const STORE_KEY = 'journal';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export interface PerformanceStats {
@@ -86,22 +88,11 @@ export class Journal {
   }
 
   private load(): void {
-    try {
-      if (existsSync(DATA_FILE)) {
-        this.trades = JSON.parse(readFileSync(DATA_FILE, 'utf8'));
-      }
-    } catch {
-      this.trades = [];
-    }
+    this.trades = readJson<Trade[]>(STORE_KEY, []);
   }
 
   private save(): void {
-    try {
-      mkdirSync(dirname(DATA_FILE), { recursive: true });
-      writeFileSync(DATA_FILE, JSON.stringify(this.trades, null, 2));
-    } catch {
-      /* ephemeral filesystems (e.g. Railway) may reject writes; keep in memory */
-    }
+    writeJson(STORE_KEY, this.trades);
   }
 }
 
