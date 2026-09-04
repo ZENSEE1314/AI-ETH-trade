@@ -7,6 +7,7 @@ import { readStructure } from '../strategy/structure.js';
 import { buildMtfLiquidityMap } from '../strategy/mtfLiquidity.js';
 import { computeVwap, todaysCandles } from '../strategy/vwap.js';
 import { analyzeCandle } from '../strategy/candles.js';
+import { detectConsolidation } from '../strategy/consolidation.js';
 import { fetchHeadlines, formatHeadlines } from './news.js';
 
 export interface AdvisorSnapshot {
@@ -19,6 +20,37 @@ export interface AdvisorSnapshot {
 }
 
 const pct = (a: number, b: number) => ((a - b) / b) * 100;
+
+/** Did any of the recent candles tag a VWAP band and reject off it? Longs want a
+ *  bullish rejection at the lower band, shorts a bearish rejection at the upper. */
+function bandReaction(recent: Candle[], lower: number, upper: number): string {
+  for (let i = recent.length - 1; i >= 0; i--) {
+    const c = recent[i];
+    const a = analyzeCandle(c);
+    const ago = recent.length - 1 - i;
+    const when = ago === 0 ? 'this bar' : `${ago} bar${ago > 1 ? 's' : ''} ago`;
+    if (c.low <= lower && (a.rejection === 'bottom' || (a.bullish && c.close > lower))) {
+      return `lower band tagged + bullish rejection (${when}) — LONG location valid`;
+    }
+    if (c.high >= upper && (a.rejection === 'top' || (a.bearish && c.close < upper))) {
+      return `upper band tagged + bearish rejection (${when}) — SHORT location valid`;
+    }
+  }
+  return 'no band tag + rejection in the last 6×15M — no valid entry LOCATION yet';
+}
+
+function consolidationLine(name: string, c: Candle[], window?: number): string | null {
+  const con = detectConsolidation(c, window);
+  if (!con || (!con.isCoiled && con.breakout == null)) return null;
+  const box = `${con.low.toFixed(2)}–${con.high.toFixed(2)} (${con.rangePct}% wide, ${con.bars} bars, compression ${con.compression})`;
+  if (con.confirmed) {
+    return `${name}: BREAKOUT ${con.breakout!.toUpperCase()} out of ${box} on ${con.volumeExpansion}× volume — confirmed`;
+  }
+  if (con.breakout) {
+    return `${name}: breaking ${con.breakout} out of ${box} but only ${con.volumeExpansion}× volume — not confirmed`;
+  }
+  return `${name}: COILED in ${box} — watch for a break`;
+}
 
 function structLine(name: string, c: Candle[], lb = 2): string {
   if (c.length < lb * 2 + 4) return `${name}: (insufficient history)`;
@@ -46,6 +78,17 @@ export async function buildContext(snap: AdvisorSnapshot, opts: { news?: boolean
   lines.push('  ' + structLine('1H ', h1));
   lines.push('  ' + structLine('15M', m15));
 
+  // Consolidation → breakout: is the market coiled, and is it breaking out?
+  const conLines = [
+    consolidationLine('1H ', h1, 12),
+    consolidationLine('15M', m15, 12),
+  ].filter((l): l is string => l != null);
+  if (conLines.length) {
+    lines.push('');
+    lines.push('CONSOLIDATION / BREAKOUT:');
+    for (const l of conLines) lines.push('  ' + l);
+  }
+
   // Stacked liquidity map.
   const map = buildMtfLiquidityMap(
     [
@@ -61,13 +104,20 @@ export async function buildContext(snap: AdvisorSnapshot, opts: { news?: boolean
   lines.push('  above: ' + (map.above.slice(0, 4).map((p) => `${p.price.toFixed(2)} (${p.distancePct}%, str ${p.strength}, ${p.tfs.join('+')})`).join('  |  ') || 'none'));
   lines.push('  below: ' + (map.below.slice(0, 4).map((p) => `${p.price.toFixed(2)} (${p.distancePct}%, str ${p.strength}, ${p.tfs.join('+')})`).join('  |  ') || 'none'));
 
-  // VWAP.
+  // VWAP + band reactions — the primary entry LOCATION filter. Longs are taken
+  // at the lower band, shorts at the upper band, and only with a rejection.
   const sess = todaysCandles(m15);
   if (sess.length > 2) {
     const v = computeVwap(sess);
-    const posv = px > v.vwap ? 'above' : 'below';
+    const posv = px > v.vwap ? 'above' : px < v.vwap ? 'below' : 'at';
     lines.push('');
-    lines.push(`VWAP (session): ${v.vwap.toFixed(2)} — price ${posv}  ·  bands ${v.lower.toFixed(2)} / ${v.upper.toFixed(2)}`);
+    lines.push(
+      `VWAP (session): ${v.vwap.toFixed(2)} — price ${posv}  ·  ` +
+        `lower ${v.lower.toFixed(2)} [${pct(px, v.lower).toFixed(2)}%]  ·  ` +
+        `upper ${v.upper.toFixed(2)} [${pct(px, v.upper).toFixed(2)}%]`,
+    );
+    const react = bandReaction(m15.slice(-6), v.lower, v.upper);
+    lines.push('  band reaction: ' + react);
   }
 
   // Recent sweep of the 4H structure lines.

@@ -1,6 +1,7 @@
 // The LLM trade advisor. It reads the market brief (context.ts) and returns a
-// structured green→red-travel call, reasoning like a discretionary SMC trader
-// rather than a fixed indicator threshold.
+// structured call — a green→red-travel pullback or a confirmed consolidation
+// breakout — reasoning like a discretionary SMC trader rather than a fixed
+// indicator threshold.
 //
 // Provider: Google Gemini (free tier), OpenRouter (free models), or the
 // Anthropic API. Auto-picked from whichever key is set: GEMINI_API_KEY →
@@ -45,13 +46,41 @@ const OPENROUTER_FALLBACKS = [
 ];
 
 const SYSTEM = `You are a disciplined Smart-Money-Concepts swing trader for ETH perpetual futures.
-Your ONLY setup is the "green→red travel":
+You trade TWO setups and nothing else:
 
+SETUP A — "green→red travel" (the pullback entry):
   · In a BULLISH higher-timeframe structure (HH + HL), price leaves the rising
     higher-low (the GREEN line) and travels up to the standing swing high (the
     RED line). You BUY a pullback that TAGS the green line and shows it HOLDING,
     stop just past the green line, target the red line.
   · Mirror for a BEARISH structure: sell a pullback to the red line, target green.
+
+SETUP B — "consolidation breakout" (the expansion entry):
+  · The market coils into a tight box (the CONSOLIDATION / BREAKOUT section of
+    the brief flags this — a low-range, compressing 15M or 1H box), then expands.
+  · Take the break ONLY when: (a) it is in the direction of the 4H/1D trend,
+    (b) the brief says the breakout is "confirmed" (a close outside the box on
+    a volume expansion — a break on weak volume is a trap, say "wait"), and
+    (c) there is a stacked-liquidity magnet in the breakout direction to aim at.
+  · Entry: the breakout close, or the first pullback that retests the broken
+    box edge and holds (this is the higher-quality version). Stop back inside
+    the box, past the opposite edge or the retest swing. Target the next stacked
+    liquidity pool, NOT an arbitrary round number.
+  · A breakout straight into the 4H red line (for longs) has no room — treat the
+    4H line as the target, not a level to trade through, unless 4H has already
+    CLOSED beyond it and made a fresh higher-high.
+
+ENTRY LOCATION (applies to BOTH setups, this is the default and you need a
+strong, explicit reason to deviate):
+  · LONG entries are taken at the session VWAP LOWER band.
+  · SHORT entries are taken at the session VWAP UPPER band.
+  · You must SEE THE REJECTION first — a rejection wick off the band, or a
+    close back through it in your direction. The brief's "band reaction" line
+    tells you whether this has happened. "Price is at the band" is not enough;
+    no rejection ⇒ "wait".
+  · Setup A's green/red line and Setup B's box edge tell you the DIRECTION and
+    the target; the VWAP band + rejection tells you WHEN and WHERE to enter.
+    Both must line up.
 
 Hard rules, learned from 90 days of backtesting this exact setup:
   1. Trade WITH the daily/4H trend only. Longs in a bull structure, shorts in a
@@ -80,6 +109,11 @@ Hard rules, learned from 90 days of backtesting this exact setup:
      Only act once structure confirms the direction — news alone is never the
      trigger.
   7. When in doubt, "wait". Most bars are not a setup. A good week is 2-4 trades.
+  8. BREAKOUT DISCIPLINE (setup B). Consolidation-then-expansion is a real edge,
+     but only when the break is confirmed by volume AND has somewhere to go.
+     A coiled box with price still inside it is a "wait" — note it and check
+     back. Chasing an unconfirmed break, or a break with the 4H line right in
+     front of it, is the losing version.
 
 Reply with ONLY a JSON object, no prose around it:
 {"verdict":"long"|"short"|"wait","entry":number|null,"stopLoss":number|null,
@@ -88,7 +122,7 @@ Reply with ONLY a JSON object, no prose around it:
  "warnings":["..."]}`;
 
 function userPrompt(context: string): string {
-  return `Current ETH market brief:\n\n${context}\n\nIs there a green→red travel setup right now? Reply with the JSON only.`;
+  return `Current ETH market brief:\n\n${context}\n\nIs there a setup right now — either a green→red travel (A) or a confirmed consolidation breakout (B)? Reply with the JSON only.`;
 }
 
 export async function askAdvisor(context: string, cfg: AdvisorConfig = {}): Promise<Recommendation> {
