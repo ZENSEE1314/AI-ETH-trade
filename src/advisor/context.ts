@@ -52,6 +52,22 @@ function consolidationLine(name: string, c: Candle[], window?: number): string |
   return `${name}: COILED in ${box} — watch for a break`;
 }
 
+/** Which trading mode the timeframes put us in — spelled out so the advisor
+ *  doesn't just stop at "4H is ranging". */
+function modeLine(h4: Candle[], h1: Candle[], lb = 2): string {
+  const t4 = h4.length >= lb * 2 + 4 ? readStructure(h4, lb).trend : 'ranging';
+  const t1 = h1.length >= lb * 2 + 4 ? readStructure(h1, lb).trend : 'ranging';
+  if (t4 === 'bullish' || t4 === 'bearish') {
+    const dir = t4 === 'bullish' ? 'LONGS only' : 'SHORTS only';
+    return `TREND MODE — 4H is ${t4}. Trade Setup A / B with the 4H trend (${dir}).`;
+  }
+  if (t1 === 'bullish' || t1 === 'bearish') {
+    const dir = t1 === 'bullish' ? 'LONGS' : 'SHORTS';
+    return `RANGE MODE — 4H has no trend. Follow the 1H trend (Setup D, ${dir}) off its green/red line, or fade the 4H box edges (Setup C). 1H is ${t1}.`;
+  }
+  return `NO-TREND — 4H and 1H both ranging. Only a clean 4H box-edge rejection (Setup C) or a volume-confirmed 15M breakout with a real target counts. Otherwise wait.`;
+}
+
 function structLine(name: string, c: Candle[], lb = 2): string {
   if (c.length < lb * 2 + 4) return `${name}: (insufficient history)`;
   const s = readStructure(c, lb);
@@ -71,6 +87,8 @@ export async function buildContext(snap: AdvisorSnapshot, opts: { news?: boolean
   const lines: string[] = [];
 
   lines.push(`SYMBOL ${snap.symbol}   PRICE ${px.toFixed(2)}   ${new Date(m1.at(-1)?.time ?? Date.now()).toISOString()}`);
+  lines.push('');
+  lines.push(modeLine(h4, h1));
   lines.push('');
   lines.push('STRUCTURE (confirmed swings, no repaint):');
   lines.push('  ' + structLine('1D ', d1));

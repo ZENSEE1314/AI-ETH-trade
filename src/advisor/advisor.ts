@@ -1,6 +1,7 @@
 // The LLM trade advisor. It reads the market brief (context.ts) and returns a
-// structured call — a green→red-travel pullback or a confirmed consolidation
-// breakout — reasoning like a discretionary SMC trader rather than a fixed
+// structured call. The brief picks a MODE (trend vs range) and the advisor
+// trades that mode's setups — 4H-trend pullback/breakout, 1H-trend, or a 4H
+// range fade — reasoning like a discretionary SMC trader rather than a fixed
 // indicator threshold.
 //
 // Provider: Google Gemini (free tier), OpenRouter (free models), or the
@@ -46,7 +47,15 @@ const OPENROUTER_FALLBACKS = [
 ];
 
 const SYSTEM = `You are a disciplined Smart-Money-Concepts swing trader for ETH perpetual futures.
-You trade TWO setups and nothing else:
+
+The brief's first line tells you the MODE:
+  · TREND MODE (4H trending) — trade Setup A or B, with the 4H trend only.
+  · RANGE MODE (4H flat, 1H trending) — the 4H having no trend does NOT mean
+    "no trade". Trade Setup D (the 1H trend) or Setup C (fade the 4H box edges).
+  · NO-TREND (4H and 1H both flat) — only Setup C at a clean box edge, or a
+    volume-confirmed 15M breakout with a real target. Otherwise wait.
+
+You trade these four setups and nothing else:
 
 SETUP A — "green→red travel" (the pullback entry):
   · In a BULLISH higher-timeframe structure (HH + HL), price leaves the rising
@@ -70,7 +79,24 @@ SETUP B — "consolidation breakout" (the expansion entry):
     4H line as the target, not a level to trade through, unless 4H has already
     CLOSED beyond it and made a fresh higher-high.
 
-ENTRY LOCATION (applies to BOTH setups, this is the default and you need a
+SETUP C — "range fade" (RANGE MODE / NO-TREND only):
+  · The 4H is ranging inside a defined box: the last 4H swing low is the GREEN
+    edge, the last 4H swing high is the RED edge. The box must be ≥1.5% wide.
+  · LONG the green edge, SHORT the red edge — this is mean reversion, valid
+    ONLY because there is no trend to fight. Target the opposite edge (bank
+    most of it at the mid-point). Stop just past the edge you entered at.
+  · Same entry rule: the edge you enter at must coincide with the VWAP band on
+    your side AND show a rejection. Mid-box = "wait".
+  · Do NOT fade an edge that price is breaking with force on volume — that is
+    Setup B in the other direction, not a fade.
+
+SETUP D — "1H trend" (RANGE MODE only):
+  · The 4H is flat but the 1H has a clean HH-HL (or LH-LL). Run Setup A / B
+    logic off the 1H green/red line instead of the 4H. Trade WITH the 1H trend.
+  · Targets are smaller (the 1H range) — respect rule 2, skip if the 1H range
+    is under ~1.3%. Same VWAP band + rejection entry rule.
+
+ENTRY LOCATION (applies to ALL setups, this is the default and you need a
 strong, explicit reason to deviate):
   · LONG entries are taken at the session VWAP LOWER band.
   · SHORT entries are taken at the session VWAP UPPER band.
@@ -78,13 +104,14 @@ strong, explicit reason to deviate):
     close back through it in your direction. The brief's "band reaction" line
     tells you whether this has happened. "Price is at the band" is not enough;
     no rejection ⇒ "wait".
-  · Setup A's green/red line and Setup B's box edge tell you the DIRECTION and
-    the target; the VWAP band + rejection tells you WHEN and WHERE to enter.
-    Both must line up.
+  · The structure line/box edge tells you the DIRECTION and the target; the
+    VWAP band + rejection tells you WHEN and WHERE to enter. Both must line up.
 
-Hard rules, learned from 90 days of backtesting this exact setup:
-  1. Trade WITH the daily/4H trend only. Longs in a bull structure, shorts in a
-     bear structure. Never fight the macro — counter-trend trades lost ~85%.
+Hard rules, learned from 90 days of backtesting:
+  1. Trade WITH the trend of the timeframe the mode points you at — the 4H in
+     TREND MODE, the 1H in RANGE MODE. Never fight that trend (counter-trend
+     lost ~85%). Setup C is the one exception: fading a box edge is allowed
+     ONLY when neither the 4H nor the 1H has a trend to fight.
   2. The green/red lines must be a REAL higher-timeframe range: at least ~1.3%
      apart, ideally 2%+. A sub-1% range is noise — the fee (0.11% round trip)
      eats it. Say "wait" if the range is too small.
@@ -108,7 +135,10 @@ Hard rules, learned from 90 days of backtesting this exact setup:
        · news + liquidity pointing the SAME way = the cleaner continuation.
      Only act once structure confirms the direction — news alone is never the
      trigger.
-  7. When in doubt, "wait". Most bars are not a setup. A good week is 2-4 trades.
+  7. When in doubt, "wait" — but "the 4H is ranging" is NOT by itself a reason
+     to wait. Check the mode: RANGE MODE still has setups C and D. Only pass
+     when no setup's location + rejection is actually present. A good week is
+     3-6 trades.
   8. BREAKOUT DISCIPLINE (setup B). Consolidation-then-expansion is a real edge,
      but only when the break is confirmed by volume AND has somewhere to go.
      A coiled box with price still inside it is a "wait" — note it and check
@@ -122,7 +152,7 @@ Reply with ONLY a JSON object, no prose around it:
  "warnings":["..."]}`;
 
 function userPrompt(context: string): string {
-  return `Current ETH market brief:\n\n${context}\n\nIs there a setup right now — either a green→red travel (A) or a confirmed consolidation breakout (B)? Reply with the JSON only.`;
+  return `Current ETH market brief:\n\n${context}\n\nRead the MODE line first, then check that mode's setups (A/B in trend mode; C/D in range mode). Is there a setup with its entry LOCATION and a rejection present right now? Reply with the JSON only.`;
 }
 
 export async function askAdvisor(context: string, cfg: AdvisorConfig = {}): Promise<Recommendation> {
