@@ -6,6 +6,7 @@ import type { Candle, Position, Signal, Trade } from '../types.js';
 import { config } from '../config.js';
 import { runtime, canTradeLive } from '../runtime.js';
 import { logger } from '../logger.js';
+import { readJson, writeJson } from '../store.js';
 import { generateSignal, type MarketSnapshot } from '../strategy/signal.js';
 import { buildBias } from '../strategy/bias.js';
 import { readStructure } from '../strategy/structure.js';
@@ -61,8 +62,10 @@ export interface EngineState {
 
 export class TradeEngine extends EventEmitter {
   private journal = new Journal();
-  private openPositions: Position[] = [];
-  private recentSignals: Signal[] = [];
+  // Persisted to the volume so a redeploy doesn't lose an open trade or wipe
+  // the recent-signals feed (advisor reasoning included) the dashboard shows.
+  private openPositions: Position[] = readJson<Position[]>('positions', []);
+  private recentSignals: Signal[] = readJson<Signal[]>('signals', []);
   private lastPx = 0;
   private lastBias = 'n/a';
   private running = false;
@@ -143,6 +146,14 @@ export class TradeEngine extends EventEmitter {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     logger.info('Engine stopped.');
+  }
+
+  private saveSignals(): void {
+    writeJson('signals', this.recentSignals);
+  }
+
+  private savePositions(): void {
+    writeJson('positions', this.openPositions);
   }
 
   private riskContext(): RiskContext {
@@ -336,13 +347,17 @@ export class TradeEngine extends EventEmitter {
         still.push(pos);
       }
     }
-    this.openPositions = still;
+    if (still.length !== this.openPositions.length) {
+      this.openPositions = still;
+      this.savePositions();
+    }
   }
 
   /** Run a signal through risk and, if approved, execute it. */
   processSignal(signal: Signal): void {
     this.recentSignals.unshift(signal);
     this.recentSignals = this.recentSignals.slice(0, 20);
+    this.saveSignals();
     this.emit('signal', signal);
 
     const decision = assessRisk(signal, this.riskContext());
@@ -370,6 +385,7 @@ export class TradeEngine extends EventEmitter {
     }
 
     this.openPositions.push(position);
+    this.savePositions();
     logger.trade(`Opened ${position.side} ${position.symbol} @ ${position.entry} (${position.mode}) size=${position.sizeContracts}`);
     this.emit('opened', position);
   }
@@ -382,6 +398,7 @@ export class TradeEngine extends EventEmitter {
     const trade = closePosition(pos, this.lastPx || pos.entry, 'manual');
     this.journal.record(trade);
     this.openPositions.splice(idx, 1);
+    this.savePositions();
     logger.trade(`Manually closed ${pos.side} ${pos.symbol}: ${trade.pnlUsdt} USDT`);
     this.emit('trade', trade);
     return true;
