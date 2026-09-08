@@ -29,6 +29,7 @@ import { Journal } from './journal.js';
 import { resample } from '../backtest/resample.js';
 import { buildContext } from '../advisor/context.js';
 import { askAdvisor } from '../advisor/advisor.js';
+import { VwapBandRsiStrategy } from '../strategy/vwapBandRsi.js';
 import { randomUUID } from 'node:crypto';
 
 const ADVISOR_MIN_INTERVAL_MS = Number(process.env.ADVISOR_MIN_INTERVAL_MS ?? 15 * 60_000);
@@ -84,6 +85,7 @@ export class TradeEngine extends EventEmitter {
   private lastAdvisorCallAt = 0;
   private advisorBusy = false;
   private cycleBusy = false; // guards against interval ticks stacking on a slow cycle
+  private vbr = new VwapBandRsiStrategy();
 
   /** Base equity comes from settings so it reflects UI changes on restart. */
   get startEquity(): number {
@@ -192,6 +194,14 @@ export class TradeEngine extends EventEmitter {
       let outcome: string;
       if (this.openPositions.length > 0) {
         outcome = `holding ${this.openPositions.length} position(s)`;
+      } else if (config.strategy === 'vwapbandrsi') {
+        const signal = this.vbr.evaluate(snap);
+        outcome = signal
+          ? `VBR signal ${signal.side} @ ${signal.entry}`
+          : this.vbr.armed
+          ? 'VBR armed — waiting for RSI cross'
+          : 'VBR no setup';
+        if (signal) this.processSignal(signal);
       } else if (runtime.advisorMode) {
         const waitMs = ADVISOR_MIN_INTERVAL_MS - (Date.now() - this.lastAdvisorCallAt);
         outcome = this.advisorBusy
@@ -337,6 +347,16 @@ export class TradeEngine extends EventEmitter {
     if (!candle) return;
     const still: Position[] = [];
     for (const pos of this.openPositions) {
+      // TP1 trail: once price tags the first target, move the stop to breakeven.
+      if (pos.tp1 != null && !pos.beMoved) {
+        const tp1Hit = pos.side === 'long' ? candle.high >= pos.tp1 : candle.low <= pos.tp1;
+        if (tp1Hit) {
+          pos.stopLoss = pos.entry;
+          pos.beMoved = true;
+          this.savePositions();
+          logger.info(`${pos.symbol} tagged TP1 ${pos.tp1} — stop moved to breakeven ${pos.entry}`);
+        }
+      }
       const trade = evaluatePosition(pos, candle);
       if (trade) {
         this.journal.record(trade);

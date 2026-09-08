@@ -123,6 +123,8 @@ export interface Position {
   liquidationPrice: number;
   openedAt: number;
   mode: TradingMode;
+  tp1?: number; // first target — engine trails the stop to breakeven once tagged
+  beMoved?: boolean; // stop already moved to breakeven
 }
 
 export interface Trade {

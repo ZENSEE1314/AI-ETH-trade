@@ -31,6 +31,10 @@ export const config = {
   positionSizePct: num('POSITION_SIZE_PCT', 0),
   // Let the LLM advisor decide entries/stops/targets instead of the engine.
   advisorMode: (process.env.ADVISOR_MODE ?? '').toLowerCase() === 'true',
+  // Active strategy: 'advisor' (LLM), 'vwapbandrsi' (mechanical long-only band
+  // fade), or 'signal' (the built-in draw-on-liquidity engine). Overrides
+  // advisorMode when set to something other than 'advisor'.
+  strategy: str('STRATEGY', 'advisor').toLowerCase(),
   maxDailyLossPct: num('MAX_DAILY_LOSS_PCT', 3.0),
   maxWeeklyLossPct: num('MAX_WEEKLY_LOSS_PCT', 8.0),
   minRiskReward: num('MIN_RISK_REWARD', 2.0),

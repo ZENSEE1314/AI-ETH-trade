@@ -18,6 +18,7 @@ export function openPaperPosition(signal: Signal, risk: RiskDecision): Position 
     liquidationPrice: risk.liquidationPrice,
     openedAt: Date.now(),
     mode: 'paper',
+    tp1: signal.nearTarget,
   };
 }
 
