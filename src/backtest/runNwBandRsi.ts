@@ -15,7 +15,7 @@
 import type { Candle } from '../types.js';
 
 const MIRROR = 'https://data-api.binance.vision/api/v3/klines';
-const SYMBOLS = ['PAXGUSDT', 'BTCUSDT', 'ETHUSDT', 'BNBUSDT'];
+const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT'];
 const COST = 7 / 10_000;
 
 const arg = (n: string, d: string) => {
@@ -50,12 +50,19 @@ interface Params {
   tp1LockFrac: number;
   beAtR: number;
   maxBars: number;
+  // SIDEWAYS filter: only enter when the NW midline slope over `rangeLookback`
+  // bars is flatter than `rangeMaxSlopePct`% of price AND ADX < `rangeAdxMax`.
+  rangeFilter: boolean;
+  rangeLookback: number;
+  rangeMaxSlopePct: number;
+  rangeAdxMax: number;
 }
 const BASE: Params = {
   h: 8, mult: 3, maeLen: 100, rsiPeriod: 14, rsiLo: 30, rsiHi: 70,
-  rsiTrigger: 'maCross', rsiMaLen: 14,
+  rsiTrigger: 'level', rsiMaLen: 14,
   armBars: 6, stopPct: 2, targetMode: 'tp1tp2', scaleFrac: 0.5, tp1LockFrac: 0.75,
   beAtR: 99, maxBars: 48,
+  rangeFilter: true, rangeLookback: 20, rangeMaxSlopePct: 1.2, rangeAdxMax: 25,
 };
 
 async function fetchAll(symbol: string, tf: string): Promise<Candle[]> {
@@ -113,7 +120,39 @@ function rsiSeries(closes: number[], period: number): number[] {
   return out;
 }
 
-interface Trade { side: 'long' | 'short'; entryTime: number; hour: number; rMultiple: number; pctReturn: number; reason: string; }
+/** Wilder ADX. */
+function adxSeries(c: Candle[], period = 14): number[] {
+  const n = c.length;
+  const adx = new Array(n).fill(0);
+  if (n < period * 2) return adx;
+  let tr14 = 0, plus14 = 0, minus14 = 0;
+  const dx: number[] = new Array(n).fill(0);
+  for (let i = 1; i < n; i++) {
+    const up = c[i].high - c[i - 1].high;
+    const dn = c[i - 1].low - c[i].low;
+    const plusDM = up > dn && up > 0 ? up : 0;
+    const minusDM = dn > up && dn > 0 ? dn : 0;
+    const tr = Math.max(c[i].high - c[i].low, Math.abs(c[i].high - c[i - 1].close), Math.abs(c[i].low - c[i - 1].close));
+    if (i <= period) { tr14 += tr; plus14 += plusDM; minus14 += minusDM; }
+    else {
+      tr14 = tr14 - tr14 / period + tr;
+      plus14 = plus14 - plus14 / period + plusDM;
+      minus14 = minus14 - minus14 / period + minusDM;
+    }
+    if (i >= period) {
+      const pdi = 100 * (plus14 / tr14);
+      const mdi = 100 * (minus14 / tr14);
+      dx[i] = pdi + mdi === 0 ? 0 : (100 * Math.abs(pdi - mdi)) / (pdi + mdi);
+    }
+  }
+  let acc = 0;
+  for (let i = period; i < period * 2 && i < n; i++) acc += dx[i];
+  adx[period * 2 - 1] = acc / period;
+  for (let i = period * 2; i < n; i++) adx[i] = (adx[i - 1] * (period - 1) + dx[i]) / period;
+  return adx;
+}
+
+interface Trade { side: 'long' | 'short'; entryTime: number; hour: number; rMultiple: number; pctReturn: number; maePct: number; reason: string; }
 
 function backtest(c: Candle[], p: Params, onlySide?: 'long' | 'short'): Trade[] {
   const closes = c.map((x) => x.close);
@@ -137,11 +176,18 @@ function backtest(c: Candle[], p: Params, onlySide?: 'long' | 'short'): Trade[] 
   }
   const upper = (i: number) => nw[i] + p.mult * mae[i];
   const lower = (i: number) => nw[i] - p.mult * mae[i];
+  const adx = p.rangeFilter ? adxSeries(c, 14) : [];
+  const isRanging = (i: number): boolean => {
+    if (!p.rangeFilter) return true;
+    if (i < p.rangeLookback) return false;
+    const slopePct = (Math.abs(nw[i] - nw[i - p.rangeLookback]) / closes[i]) * 100;
+    return slopePct <= p.rangeMaxSlopePct && adx[i] <= p.rangeAdxMax;
+  };
 
   const trades: Trade[] = [];
   let pos: null | {
     side: 'long' | 'short'; entry: number; i: number; stop: number; init: number;
-    be: boolean; tookTp1: boolean; remaining: number; bankedRet: number; legs: number;
+    be: boolean; tookTp1: boolean; remaining: number; bankedRet: number; legs: number; worstAdv: number;
   } = null;
   let arm: null | { side: 'long' | 'short'; bar: number } = null;
 
@@ -155,10 +201,14 @@ function backtest(c: Candle[], p: Params, onlySide?: 'long' | 'short'): Trade[] 
         const net = pos!.bankedRet - pos!.legs * COST;
         trades.push({
           side: pos!.side, entryTime: c[pos!.i].time, hour: new Date(c[pos!.i].time).getUTCHours(),
-          rMultiple: net / risk, pctReturn: net, reason,
+          rMultiple: net / risk, pctReturn: net, maePct: pos!.worstAdv, reason,
         });
         pos = null;
       };
+
+      const advPx = pos.side === 'long' ? bar.low : bar.high;
+      const advPct = pos.side === 'long' ? (pos.entry - advPx) / pos.entry * 100 : (advPx - pos.entry) / pos.entry * 100;
+      if (advPct > pos.worstAdv) pos.worstAdv = advPct;
 
       const r0 = risk * pos.entry;
       const rNow = pos.side === 'long' ? (bar.high - pos.entry) / r0 : (pos.entry - bar.low) / r0;
@@ -193,10 +243,12 @@ function backtest(c: Candle[], p: Params, onlySide?: 'long' | 'short'): Trade[] 
       continue;
     }
 
-    // arm on a band tag
+    // arm on a band tag — only when the market is ranging (sideways)
     if (!arm) {
-      if (bar.high >= upper(i) && onlySide !== 'long') arm = { side: 'short', bar: i };
-      else if (bar.low <= lower(i) && onlySide !== 'short') arm = { side: 'long', bar: i };
+      if (isRanging(i)) {
+        if (bar.high >= upper(i) && onlySide !== 'long') arm = { side: 'short', bar: i };
+        else if (bar.low <= lower(i) && onlySide !== 'short') arm = { side: 'long', bar: i };
+      }
     } else {
       if (i - arm.bar > p.armBars) { arm = null; }
       else {
@@ -210,7 +262,7 @@ function backtest(c: Candle[], p: Params, onlySide?: 'long' | 'short'): Trade[] 
         if (cross) {
           const entry = bar.close;
           const stop = arm.side === 'long' ? entry * (1 - p.stopPct / 100) : entry * (1 + p.stopPct / 100);
-          pos = { side: arm.side, entry, i, stop, init: stop, be: false, tookTp1: false, remaining: 1, bankedRet: 0, legs: 1 };
+          pos = { side: arm.side, entry, i, stop, init: stop, be: false, tookTp1: false, remaining: 1, bankedRet: 0, legs: 1, worstAdv: 0 };
           arm = null;
         }
       }
@@ -234,10 +286,62 @@ function stats(trades: Trade[]) {
 const fmtL = (label: string, s: ReturnType<typeof stats>) =>
   `  ${label.padEnd(12)} ${String(s.n).padStart(4)}  WR ${s.wr.toFixed(0).padStart(3)}%  PF ${s.pf.toFixed(2).padStart(5)}  totR ${s.totR.toFixed(0).padStart(5)}  ddR ${s.ddR.toFixed(0).padStart(4)}  $1k→ ${s.eqSpot.toFixed(0).padStart(6)} spot / ${s.eqLev.toFixed(0).padStart(6)} 10x`;
 
-async function main() {
-  console.log(`\nNW ENVELOPE + RSI-CROSS reversal (CAUSAL / non-repainting NW) · 7bps/side`);
-  console.log(`long lower-band + RSI↑${BASE.rsiLo} · short upper-band + RSI↓${BASE.rsiHi} · stop ${BASE.stopPct}% · TP ${BASE.targetMode} · h${BASE.h} mult${BASE.mult}\n`);
+/** Isolated-margin leverage sim: commit 10% of equity per trade, compounding. */
+function levSim(trades: Trade[], lev: number) {
+  let eq = 1000, peak = 1000, maxDdPct = 0, liq = 0, wins = 0;
+  const liqThresh = 100 / lev - (lev >= 50 ? 0.5 : lev >= 10 ? 0.3 : 0.1);
+  for (const t of trades) {
+    const margin = eq * 0.1;
+    if (lev > 1 && t.maePct >= liqThresh) { eq -= margin; liq++; }
+    else { eq += margin * lev * t.pctReturn; if (t.pctReturn > 0) wins++; }
+    if (eq < 0) eq = 0;
+    peak = Math.max(peak, eq);
+    if (peak > 0) maxDdPct = Math.max(maxDdPct, (peak - eq) / peak * 100);
+    if (eq === 0) break;
+  }
+  return { eq, liq, maxDdPct, wins, n: trades.length };
+}
 
+const DIRS: { name: string; side?: 'long' | 'short' }[] = [
+  { name: 'long+short' }, { name: 'long only', side: 'long' }, { name: 'short only', side: 'short' },
+];
+const LEVS = [1, 2, 3, 5, 10, 20, 50, 100];
+
+async function main() {
+  console.log(`\nNW ENVELOPE + RSI/MA-CROSS reversal — SIDEWAYS-ONLY (NW slope ≤${BASE.rangeMaxSlopePct}% & ADX ≤${BASE.rangeAdxMax})`);
+  console.log(`TP1 = mid band (bank ${BASE.scaleFrac * 100}%), runner locks ${BASE.tp1LockFrac * 100}% of TP1 gain · TP2 = opposite band · SL ${BASE.stopPct}% · 7bps/side`);
+  console.log(`sizing: 10% of equity as margin per trade, isolated (liquidation loses the margin)\n`);
+
+  for (const tf of TFS) {
+    console.log(`\n═══════ ${tf} ═══════`);
+    const data: Record<string, Candle[]> = {};
+    for (const s of SYMBOLS) { try { data[s] = await fetchAll(s, tf); } catch { /* skip */ } }
+
+    for (const d of DIRS) {
+      const perCoin: Record<string, Trade[]> = {};
+      for (const s of SYMBOLS) { if (data[s]) perCoin[s] = backtest(data[s], BASE, d.side); }
+      const port = Object.values(perCoin).flat().sort((a, b) => a.entryTime - b.entryTime);
+      const st = stats(port);
+      console.log(`\n── ${d.name.toUpperCase()} · ${port.length} trades · WR ${st.wr.toFixed(0)}% · PF ${st.pf.toFixed(2)} · totR ${st.totR.toFixed(0)} ──`);
+      for (const s of SYMBOLS) {
+        if (!perCoin[s]) continue;
+        const cs = stats(perCoin[s]);
+        console.log(`   ${s.replace('USDT', '').padEnd(5)} n${String(cs.n).padStart(4)}  WR ${cs.wr.toFixed(0).padStart(3)}%  PF ${cs.pf.toFixed(2)}  totR ${cs.totR.toFixed(0).padStart(5)}`);
+      }
+      console.log(`   $1000 @ 10% margin, by leverage:`);
+      console.log(`   ` + LEVS.map((L) => `${L}x`.padStart(9)).join(''));
+      console.log(`   ` + LEVS.map((L) => {
+        const r = levSim(port, L);
+        const tag = r.eq <= 0 ? 'DEAD' : r.eq >= 1e6 ? `${(r.eq / 1e6).toFixed(1)}M` : r.eq >= 1e3 ? `${(r.eq / 1e3).toFixed(1)}k` : r.eq.toFixed(0);
+        return (tag + (r.liq ? `│${r.liq}` : '')).padStart(9);
+      }).join(''));
+      console.log(`   ` + LEVS.map((L) => `${levSim(port, L).maxDdPct.toFixed(0)}%dd`.padStart(9)).join(''));
+    }
+  }
+  console.log(`\nNW repaints on the chart — corrected here via a causal estimate. "│N" = N liquidations.\n`);
+}
+
+async function mainGrid() {
   for (const tf of TFS) {
     console.log(`\n═══ ${tf} ${'═'.repeat(50)}`);
     const data: Record<string, Candle[]> = {};
@@ -291,8 +395,7 @@ async function main() {
       }
     }
   }
-  console.log(`\nNote: NW repaints on the chart — a live entry sees a different band than this (already`);
-  console.log(`corrected for here via the causal estimate). Still, treat small edges as noise.\n`);
+  console.log(`\nNote: causal (non-repainting) NW. Treat small edges as noise.\n`);
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+(GRID ? mainGrid() : main()).catch((e) => { console.error(e); process.exit(1); });
