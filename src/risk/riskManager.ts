@@ -24,6 +24,7 @@ export function liquidationPrice(side: 'long' | 'short', entry: number, leverage
 }
 
 export function assessRisk(signal: Signal, ctx: RiskContext): RiskDecision {
+  const leverage = signal.leverageOverride ?? runtime.leverage;
   const reject = (reason: string): RiskDecision => ({
     approved: false,
     reason,
@@ -32,6 +33,7 @@ export function assessRisk(signal: Signal, ctx: RiskContext): RiskDecision {
     marginUsdt: 0,
     riskUsdt: 0,
     liquidationPrice: 0,
+    leverage,
   });
 
   // --- Hard kill switches ----------------------------------------------------
@@ -71,10 +73,10 @@ export function assessRisk(signal: Signal, ctx: RiskContext): RiskDecision {
   // If the stop sits beyond the liquidation price, you get liquidated BEFORE
   // your stop — meaning your "1% risk" is a lie. Reject rather than pretend.
   const stopDistancePct = stopDistance / signal.entry;
-  const liquidationDistancePct = 1 / runtime.leverage - MAINTENANCE_MARGIN_RATE;
+  const liquidationDistancePct = 1 / leverage - MAINTENANCE_MARGIN_RATE;
   if (stopDistancePct >= liquidationDistancePct) {
     return reject(
-      `Stop is ${(stopDistancePct * 100).toFixed(2)}% away but ${runtime.leverage}x liquidates at ` +
+      `Stop is ${(stopDistancePct * 100).toFixed(2)}% away but ${leverage}x liquidates at ` +
         `~${(liquidationDistancePct * 100).toFixed(2)}%. Setup would be liquidated before the stop — ` +
         `reduce leverage or widen the invalidation. Rejected.`,
     );
@@ -90,15 +92,16 @@ export function assessRisk(signal: Signal, ctx: RiskContext): RiskDecision {
   let positionSizeContracts: number;
   let marginUsdt: number;
   let riskUsdt: number;
-  if (runtime.positionSizePct > 0) {
-    marginUsdt = ctx.equityUsdt * (runtime.positionSizePct / 100);
-    const notionalUsdt = marginUsdt * runtime.leverage;
+  const positionSizePct = signal.marginPctOverride ?? runtime.positionSizePct;
+  if (positionSizePct > 0) {
+    marginUsdt = ctx.equityUsdt * (positionSizePct / 100);
+    const notionalUsdt = marginUsdt * leverage;
     positionSizeContracts = notionalUsdt / signal.entry;
     riskUsdt = positionSizeContracts * stopDistance;
   } else {
     riskUsdt = ctx.equityUsdt * (runtime.riskPerTradePct / 100);
     positionSizeContracts = riskUsdt / stopDistance;
-    marginUsdt = (positionSizeContracts * signal.entry) / runtime.leverage;
+    marginUsdt = (positionSizeContracts * signal.entry) / leverage;
   }
   const notionalUsdt = positionSizeContracts * signal.entry;
 
@@ -115,12 +118,13 @@ export function assessRisk(signal: Signal, ctx: RiskContext): RiskDecision {
 
   return {
     approved: true,
-    reason: `Approved: ${runtime.positionSizePct > 0 ? `margin ${marginUsdt.toFixed(2)} (${runtime.positionSizePct}%)` : `risk ${riskUsdt.toFixed(2)}`} USDT, size ${positionSizeContracts.toFixed(4)}, R:R ${signal.riskReward}.`,
+    reason: `Approved: ${positionSizePct > 0 ? `margin ${marginUsdt.toFixed(2)} (${positionSizePct}%)` : `risk ${riskUsdt.toFixed(2)}`} USDT, size ${positionSizeContracts.toFixed(4)}, R:R ${signal.riskReward}.`,
     positionSizeContracts: round(positionSizeContracts, 4),
     notionalUsdt: round(notionalUsdt, 2),
     marginUsdt: round(marginUsdt, 2),
     riskUsdt: round(riskUsdt, 2),
-    liquidationPrice: round(liquidationPrice(signal.side, signal.entry, runtime.leverage), 2),
+    liquidationPrice: round(liquidationPrice(signal.side, signal.entry, leverage), 2),
+    leverage,
   };
 }
 

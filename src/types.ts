@@ -99,6 +99,11 @@ export interface Signal {
   drawTarget?: number; // the opposing unswept pool price is drawn toward (full draw)
   nearTarget?: number; // nearest opposing pool — the scale-out / first target
   drawTimeframe?: '4H' | '15M'; // where the driving draw was read
+  // Per-signal sizing/leverage overrides (e.g. the band-fade strategy runs
+  // fixed-margin at its own leverage while the advisor stays risk-based).
+  // Fall back to runtime settings when unset.
+  marginPctOverride?: number; // commit this % of equity as margin for this trade
+  leverageOverride?: number; // leverage for this trade
 }
 
 export interface RiskDecision {
@@ -109,6 +114,7 @@ export interface RiskDecision {
   marginUsdt: number;
   riskUsdt: number;
   liquidationPrice: number;
+  leverage: number; // effective leverage applied to this trade
 }
 
 export interface Position {

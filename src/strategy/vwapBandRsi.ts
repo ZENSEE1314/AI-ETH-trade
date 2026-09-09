@@ -24,6 +24,8 @@ export interface VwapBandRsiLiveOptions {
   stopPct: number; // stop this % below entry
   tp2Sigma: number; // TP2 = VWAP + this many σ
   minBandWidthPct: number;
+  marginPct: number; // commit this % of equity as margin per trade (0 = use runtime)
+  leverage: number; // leverage for this strategy's trades (0 = use runtime)
 }
 
 export const DEFAULT_VBR: VwapBandRsiLiveOptions = {
@@ -35,6 +37,8 @@ export const DEFAULT_VBR: VwapBandRsiLiveOptions = {
   stopPct: 1,
   tp2Sigma: 1.5,
   minBandWidthPct: 0.8,
+  marginPct: 95, // band-fade runs fixed-margin (the "new rule")
+  leverage: 12,
 };
 
 function rollingVwap(bars: Candle[], len: number, mult: number) {
@@ -143,6 +147,8 @@ export class VwapBandRsiStrategy {
       nearTarget: round(band.vwap, 2), // TP1 — engine trails stop to BE when tagged
       drawTarget: round(takeProfit, 2),
       drawTimeframe: '4H',
+      marginPctOverride: o.marginPct > 0 ? o.marginPct : undefined,
+      leverageOverride: o.leverage > 0 ? o.leverage : undefined,
     };
   }
 }
