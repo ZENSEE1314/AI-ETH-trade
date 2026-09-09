@@ -39,14 +39,20 @@ interface Params {
   rsiLo: number; // long when RSI crosses UP through this at the lower band
   rsiHi: number; // short when RSI crosses DOWN through this at the upper band
   armBars: number; // bars the band-tag stays valid waiting for the RSI cross
-  stopPct: number; // hard stop from entry
-  targetMode: 'mid' | 'opp'; // take profit at the NW midline, or the opposite band
+  stopPct: number; // initial hard stop from entry
+  targetMode: 'mid' | 'opp' | 'tp1tp2';
+  // tp1tp2 exit: TP1 = NW midline (bank `scaleFrac`), then trail the runner stop
+  // to entry + `tp1LockFrac`*(TP1-entry) — i.e. give back (1-tp1LockFrac) of the
+  // TP1 gain. TP2 = opposite band closes the rest.
+  scaleFrac: number;
+  tp1LockFrac: number;
   beAtR: number;
   maxBars: number;
 }
 const BASE: Params = {
   h: 8, mult: 3, maeLen: 100, rsiPeriod: 14, rsiLo: 30, rsiHi: 70,
-  armBars: 6, stopPct: 2, targetMode: 'mid', beAtR: 99, maxBars: 48,
+  armBars: 6, stopPct: 2, targetMode: 'tp1tp2', scaleFrac: 0.5, tp1LockFrac: 0.75,
+  beAtR: 99, maxBars: 48,
 };
 
 async function fetchAll(symbol: string, tf: string): Promise<Candle[]> {
@@ -106,7 +112,7 @@ function rsiSeries(closes: number[], period: number): number[] {
 
 interface Trade { side: 'long' | 'short'; entryTime: number; hour: number; rMultiple: number; pctReturn: number; reason: string; }
 
-function backtest(c: Candle[], p: Params): Trade[] {
+function backtest(c: Candle[], p: Params, onlySide?: 'long' | 'short'): Trade[] {
   const closes = c.map((x) => x.close);
   const nw = nwCausal(closes, p.h);
   const rsi = rsiSeries(closes, p.rsiPeriod);
@@ -122,33 +128,64 @@ function backtest(c: Candle[], p: Params): Trade[] {
   const lower = (i: number) => nw[i] - p.mult * mae[i];
 
   const trades: Trade[] = [];
-  let pos: null | { side: 'long' | 'short'; entry: number; i: number; stop: number; init: number; be: boolean } = null;
+  let pos: null | {
+    side: 'long' | 'short'; entry: number; i: number; stop: number; init: number;
+    be: boolean; tookTp1: boolean; remaining: number; bankedRet: number; legs: number;
+  } = null;
   let arm: null | { side: 'long' | 'short'; bar: number } = null;
 
   for (let i = p.maeLen + 5; i < c.length; i++) {
     const bar = c[i];
     if (pos) {
-      const r0 = Math.abs(pos.entry - pos.init);
-      const rNow = pos.side === 'long' ? (bar.high - pos.entry) / r0 : (pos.entry - bar.low) / r0;
-      if (!pos.be && rNow >= p.beAtR) { pos.stop = pos.entry; pos.be = true; }
-      const tgt = p.targetMode === 'mid' ? nw[i] : pos.side === 'long' ? upper(i) : lower(i);
-      const hitStop = pos.side === 'long' ? bar.low <= pos.stop : bar.high >= pos.stop;
-      const hitTgt = pos.side === 'long' ? bar.high >= tgt : bar.low <= tgt;
-      const timeout = i - pos.i >= p.maxBars;
-      if (hitStop || hitTgt || timeout) {
-        const exit = hitStop ? pos.stop : hitTgt ? tgt : bar.close;
-        const dir = pos.side === 'long' ? 1 : -1;
-        const net = dir * (exit - pos.entry) / pos.entry - 2 * COST;
-        const risk = Math.abs(pos.entry - pos.init) / pos.entry || 0.01;
-        trades.push({ side: pos.side, entryTime: c[pos.i].time, hour: new Date(c[pos.i].time).getUTCHours(), rMultiple: net / risk, pctReturn: net, reason: hitStop ? (pos.be ? 'be' : 'sl') : hitTgt ? 'tp' : 'time' });
+      const dir = pos.side === 'long' ? 1 : -1;
+      const retAt = (px: number) => (dir * (px - pos!.entry)) / pos!.entry;
+      const risk = Math.abs(pos.entry - pos.init) / pos.entry || 0.01;
+      const finish = (reason: string) => {
+        const net = pos!.bankedRet - pos!.legs * COST;
+        trades.push({
+          side: pos!.side, entryTime: c[pos!.i].time, hour: new Date(c[pos!.i].time).getUTCHours(),
+          rMultiple: net / risk, pctReturn: net, reason,
+        });
         pos = null;
-      } else continue;
+      };
+
+      const r0 = risk * pos.entry;
+      const rNow = pos.side === 'long' ? (bar.high - pos.entry) / r0 : (pos.entry - bar.low) / r0;
+      if (!pos.be && p.beAtR < 90 && rNow >= p.beAtR) { pos.stop = pos.entry; pos.be = true; }
+
+      const hitStop = pos.side === 'long' ? bar.low <= pos.stop : bar.high >= pos.stop;
+      if (hitStop) { pos.bankedRet += pos.remaining * retAt(pos.stop); pos.legs++; finish(pos.be || pos.tookTp1 ? 'be' : 'sl'); continue; }
+
+      if (p.targetMode === 'tp1tp2') {
+        const mid = nw[i];
+        const opp = pos.side === 'long' ? upper(i) : lower(i);
+        if (!pos.tookTp1) {
+          const hitTp1 = pos.side === 'long' ? bar.high >= mid : bar.low <= mid;
+          if (hitTp1) {
+            pos.bankedRet += p.scaleFrac * retAt(mid);
+            pos.remaining -= p.scaleFrac;
+            pos.legs++;
+            pos.tookTp1 = true;
+            pos.stop = pos.entry + dir * p.tp1LockFrac * Math.abs(mid - pos.entry); // TP1 minus (1-lock) of the gain
+          }
+        } else {
+          const hitTp2 = pos.side === 'long' ? bar.high >= opp : bar.low <= opp;
+          if (hitTp2) { pos.bankedRet += pos.remaining * retAt(opp); pos.legs++; finish('tp2'); continue; }
+        }
+      } else {
+        const tgt = p.targetMode === 'mid' ? nw[i] : pos.side === 'long' ? upper(i) : lower(i);
+        const hitTgt = pos.side === 'long' ? bar.high >= tgt : bar.low <= tgt;
+        if (hitTgt) { pos.bankedRet += pos.remaining * retAt(tgt); pos.legs++; finish('tp'); continue; }
+      }
+
+      if (i - pos.i >= p.maxBars) { pos.bankedRet += pos.remaining * retAt(bar.close); pos.legs++; finish('time'); continue; }
+      continue;
     }
 
     // arm on a band tag
     if (!arm) {
-      if (bar.high >= upper(i)) arm = { side: 'short', bar: i };
-      else if (bar.low <= lower(i)) arm = { side: 'long', bar: i };
+      if (bar.high >= upper(i) && onlySide !== 'long') arm = { side: 'short', bar: i };
+      else if (bar.low <= lower(i) && onlySide !== 'short') arm = { side: 'long', bar: i };
     } else {
       if (i - arm.bar > p.armBars) { arm = null; }
       else {
@@ -158,7 +195,7 @@ function backtest(c: Candle[], p: Params): Trade[] {
         if (cross) {
           const entry = bar.close;
           const stop = arm.side === 'long' ? entry * (1 - p.stopPct / 100) : entry * (1 + p.stopPct / 100);
-          pos = { side: arm.side, entry, i, stop, init: stop, be: false };
+          pos = { side: arm.side, entry, i, stop, init: stop, be: false, tookTp1: false, remaining: 1, bankedRet: 0, legs: 1 };
           arm = null;
         }
       }
@@ -192,7 +229,7 @@ async function main() {
     for (const s of SYMBOLS) {
       try { data[s] = await fetchAll(s, tf); } catch { /* skip */ }
     }
-    const variants = GRID
+    const variants: { name: string; p: Params; side?: 'long' | 'short' }[] = GRID
       ? [
           { name: 'base', p: BASE },
           { name: 'RSI 25/75', p: { ...BASE, rsiLo: 25, rsiHi: 75 } },
@@ -204,6 +241,11 @@ async function main() {
           { name: 'mult 4', p: { ...BASE, mult: 4 } },
           { name: 'h 12', p: { ...BASE, h: 12 } },
           { name: 'BE +1R', p: { ...BASE, beAtR: 1 } },
+          { name: 'lock 50%', p: { ...BASE, tp1LockFrac: 0.5 } },
+          { name: 'lock 100% (BE)', p: { ...BASE, tp1LockFrac: 1 } },
+          { name: 'bank 75% at TP1', p: { ...BASE, scaleFrac: 0.75 } },
+          { name: 'long only', p: { ...BASE }, side: 'long' as const },
+          { name: 'short only', p: { ...BASE }, side: 'short' as const },
         ]
       : [{ name: 'base', p: BASE }];
 
@@ -212,7 +254,7 @@ async function main() {
       const port: Trade[] = [];
       for (const s of SYMBOLS) {
         if (!data[s]) continue;
-        const tr = backtest(data[s], v.p);
+        const tr = backtest(data[s], v.p, v.side);
         port.push(...tr);
         if (!GRID) console.log(fmtL(s.replace('USDT', ''), stats(tr)));
       }
