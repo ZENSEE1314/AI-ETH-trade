@@ -22,14 +22,15 @@ const primarySymbol = str('SYMBOL', 'ETHUSDT');
 export const config = {
   port: num('PORT', 3000),
   symbol: primarySymbol,
-  // Extra symbols the vwapbandrsi strategy also scans (comma-separated). The
-  // primary `symbol` drives the dashboard/bias; a trade can fire on any of
-  // these, still capped by maxOpenPositions.
-  symbols: Array.from(
+  // Symbols traded by the vwapbandrsi band-fade strategy (comma-separated),
+  // regardless of the primary `strategy`. The primary symbol keeps using
+  // `strategy` (e.g. the advisor). One position at a time across everything.
+  vbrSymbols: Array.from(
     new Set(
-      [primarySymbol, ...str('SYMBOLS', '').split(',')]
+      str('VBR_SYMBOLS', '')
+        .split(',')
         .map((s) => s.trim().toUpperCase())
-        .filter(Boolean),
+        .filter((s) => s && s !== primarySymbol),
     ),
   ),
 

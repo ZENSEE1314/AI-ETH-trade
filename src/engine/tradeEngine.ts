@@ -203,26 +203,34 @@ export class TradeEngine extends EventEmitter {
 
       let outcome: string;
       if (this.openPositions.length > 0) {
-        outcome = `holding ${this.openPositions.length} position(s)`;
-      } else if (config.strategy === 'vwapbandrsi') {
-        outcome = await this.scanVwapBandRsi(snap);
-      } else if (runtime.advisorMode) {
-        const waitMs = ADVISOR_MIN_INTERVAL_MS - (Date.now() - this.lastAdvisorCallAt);
-        outcome = this.advisorBusy
-          ? 'advisor thinking…'
-          : waitMs > 0
-          ? `advisor: next check in ${Math.ceil(waitMs / 60_000)}m`
-          : 'advisor: asking now';
-        void this.maybeAskAdvisor(snap);
+        outcome = `holding ${this.openPositions[0].symbol} ${this.openPositions[0].side}`;
       } else {
-        const signal = generateSignal(snap, {
-          ...this.learned.signal,
-          liqProximityPct: this.learned.liqProximityPct,
-          channelFilter: this.learned.channelFilter,
-          channelTarget: this.learned.channelTarget,
-        });
-        outcome = signal ? `signal ${signal.side} conf=${signal.confluence}` : 'no setup';
-        if (signal) this.processSignal(signal);
+        // Primary symbol: whichever `strategy` is configured.
+        if (config.strategy === 'vwapbandrsi') {
+          outcome = await this.scanVwapBandRsi([snap.symbol], snap);
+        } else if (runtime.advisorMode) {
+          const waitMs = ADVISOR_MIN_INTERVAL_MS - (Date.now() - this.lastAdvisorCallAt);
+          outcome = this.advisorBusy
+            ? 'advisor thinking…'
+            : waitMs > 0
+            ? `advisor: next check in ${Math.ceil(waitMs / 60_000)}m`
+            : 'advisor: asking now';
+          void this.maybeAskAdvisor(snap);
+        } else {
+          const signal = generateSignal(snap, {
+            ...this.learned.signal,
+            liqProximityPct: this.learned.liqProximityPct,
+            channelFilter: this.learned.channelFilter,
+            channelTarget: this.learned.channelTarget,
+          });
+          outcome = signal ? `signal ${signal.side} conf=${signal.confluence}` : 'no setup';
+          if (signal) this.processSignal(signal);
+        }
+        // Extra symbols always run the band-fade strategy (e.g. BTC + BNB),
+        // sharing the single position slot with the primary.
+        if (config.vbrSymbols.length && this.openPositions.length === 0) {
+          outcome += ` | ${await this.scanVwapBandRsi(config.vbrSymbols)}`;
+        }
       }
 
       // Per-cycle heartbeat so the log shows the agent working every check.
@@ -334,18 +342,18 @@ export class TradeEngine extends EventEmitter {
   }
 
   /**
-   * vwapbandrsi strategy: scan every configured symbol (the primary reuses the
-   * cycle's snapshot; the rest get their own fetch). One position at a time —
-   * whichever symbol triggers first takes it. Returns a log summary.
+   * Band-fade (vwapbandrsi) scan over the given symbols. `reuse` lets the
+   * caller pass an already-loaded snapshot for one of them (the primary).
+   * One position at a time — whichever symbol triggers first takes it.
    */
-  private async scanVwapBandRsi(primary: MarketSnapshot): Promise<string> {
+  private async scanVwapBandRsi(symbols: string[], reuse?: MarketSnapshot): Promise<string> {
     const notes: string[] = [];
-    for (const sym of config.symbols) {
+    for (const sym of symbols) {
       if (this.openPositions.length > 0) break;
       let s: MarketSnapshot;
       try {
-        s = sym === primary.symbol ? primary : await loadSnapshot(sym);
-      } catch (err) {
+        s = reuse && sym === reuse.symbol ? reuse : await loadSnapshot(sym);
+      } catch {
         notes.push(`${sym}:feed-err`);
         continue;
       }
