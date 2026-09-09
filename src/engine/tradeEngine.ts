@@ -30,6 +30,8 @@ import { resample } from '../backtest/resample.js';
 import { buildContext } from '../advisor/context.js';
 import { askAdvisor } from '../advisor/advisor.js';
 import { VwapBandRsiStrategy } from '../strategy/vwapBandRsi.js';
+import { loadTadFrames } from './marketData.js';
+import { detectTadSignal, tadTrailStop, parseTadSymbols, TAD_TIMEFRAMES, DEFAULT_TAD } from '../strategy/tad.js';
 import { randomUUID } from 'node:crypto';
 
 const ADVISOR_MIN_INTERVAL_MS = Number(process.env.ADVISOR_MIN_INTERVAL_MS ?? 15 * 60_000);
@@ -48,6 +50,8 @@ export interface EngineState {
   recentSignals: Signal[];
   stats: ReturnType<Journal['stats']>;
   liquidity: LiquidityMap | null; // hourly liquidity map: nearest buy/sell pools
+  tad: { symbol: string; dir: string }[]; // TAD breakout coins + allowed direction
+  maxOpenPositions: number;
   learned: {
     targetMode: string;
     stopMode: string;
@@ -87,6 +91,15 @@ export class TradeEngine extends EventEmitter {
   private cycleBusy = false; // guards against interval ticks stacking on a slow cycle
   // One VwapBandRsiStrategy per scanned symbol (each keeps its own arm state).
   private vbrBySymbol = new Map<string, VwapBandRsiStrategy>();
+
+  // TAD (Turtle/Atom/Duck) breakout — one config row per symbol with its
+  // allowed direction(s). Empty unless TAD_SYMBOLS is set.
+  private tadSymbols = parseTadSymbols(config.tadSymbols);
+
+  /** True when an open position already exists on this symbol. */
+  private hasPositionFor(symbol: string): boolean {
+    return this.openPositions.some((p) => p.symbol === symbol);
+  }
 
   private vbrFor(symbol: string): VwapBandRsiStrategy {
     let s = this.vbrBySymbol.get(symbol);
@@ -201,37 +214,40 @@ export class TradeEngine extends EventEmitter {
       await this.manageOpenPositions(snap);
       this.maybeRelearn();
 
-      let outcome: string;
-      if (this.openPositions.length > 0) {
-        outcome = `holding ${this.openPositions[0].symbol} ${this.openPositions[0].side}`;
-      } else {
-        // Primary symbol: whichever `strategy` is configured.
-        if (config.strategy === 'vwapbandrsi') {
-          outcome = await this.scanVwapBandRsi([snap.symbol], snap);
-        } else if (runtime.advisorMode) {
-          const waitMs = ADVISOR_MIN_INTERVAL_MS - (Date.now() - this.lastAdvisorCallAt);
-          outcome = this.advisorBusy
+      // Each strategy/symbol is scanned independently — an open position on one
+      // symbol no longer blocks entries on the others (multi-coin). The global
+      // MAX_OPEN_POSITIONS in the risk manager is still the hard ceiling.
+      const parts: string[] = [];
+
+      if (this.hasPositionFor(config.symbol)) {
+        parts.push(`holding ${config.symbol}`);
+      } else if (config.strategy === 'vwapbandrsi') {
+        parts.push(await this.scanVwapBandRsi([snap.symbol], snap));
+      } else if (runtime.advisorMode) {
+        const waitMs = ADVISOR_MIN_INTERVAL_MS - (Date.now() - this.lastAdvisorCallAt);
+        parts.push(
+          this.advisorBusy
             ? 'advisor thinking…'
             : waitMs > 0
             ? `advisor: next check in ${Math.ceil(waitMs / 60_000)}m`
-            : 'advisor: asking now';
-          void this.maybeAskAdvisor(snap);
-        } else {
-          const signal = generateSignal(snap, {
-            ...this.learned.signal,
-            liqProximityPct: this.learned.liqProximityPct,
-            channelFilter: this.learned.channelFilter,
-            channelTarget: this.learned.channelTarget,
-          });
-          outcome = signal ? `signal ${signal.side} conf=${signal.confluence}` : 'no setup';
-          if (signal) this.processSignal(signal);
-        }
-        // Extra symbols always run the band-fade strategy (e.g. BTC + BNB),
-        // sharing the single position slot with the primary.
-        if (config.vbrSymbols.length && this.openPositions.length === 0) {
-          outcome += ` | ${await this.scanVwapBandRsi(config.vbrSymbols)}`;
-        }
+            : 'advisor: asking now',
+        );
+        void this.maybeAskAdvisor(snap);
+      } else {
+        const signal = generateSignal(snap, {
+          ...this.learned.signal,
+          liqProximityPct: this.learned.liqProximityPct,
+          channelFilter: this.learned.channelFilter,
+          channelTarget: this.learned.channelTarget,
+        });
+        parts.push(signal ? `signal ${signal.side} conf=${signal.confluence}` : 'no setup');
+        if (signal) this.processSignal(signal);
       }
+
+      if (this.tadSymbols.length) parts.push(await this.scanTad());
+      if (config.vbrSymbols.length) parts.push(await this.scanVwapBandRsi(config.vbrSymbols));
+
+      const outcome = parts.join(' | ');
 
       // Per-cycle heartbeat so the log shows the agent working every check.
       const s15 = readStructure(snap.m15.length ? snap.m15 : snap.h1, 2);
@@ -295,7 +311,7 @@ export class TradeEngine extends EventEmitter {
    * the cycle continues.
    */
   private async maybeAskAdvisor(snap: MarketSnapshot): Promise<void> {
-    if (this.advisorBusy || this.openPositions.length > 0) return;
+    if (this.advisorBusy || this.hasPositionFor(config.symbol)) return;
     if (Date.now() - this.lastAdvisorCallAt < ADVISOR_MIN_INTERVAL_MS) return;
     this.advisorBusy = true;
     this.lastAdvisorCallAt = Date.now();
@@ -349,7 +365,7 @@ export class TradeEngine extends EventEmitter {
   private async scanVwapBandRsi(symbols: string[], reuse?: MarketSnapshot): Promise<string> {
     const notes: string[] = [];
     for (const sym of symbols) {
-      if (this.openPositions.length > 0) break;
+      if (this.hasPositionFor(sym)) continue;
       let s: MarketSnapshot;
       try {
         s = reuse && sym === reuse.symbol ? reuse : await loadSnapshot(sym);
@@ -366,6 +382,103 @@ export class TradeEngine extends EventEmitter {
       }
     }
     return `VBR ${notes.join(' ')}`;
+  }
+
+  /**
+   * TAD (Turtle/Atom/Duck) breakout scan. Independent position per symbol; for
+   * each symbol with no open position, the timeframes are checked in priority
+   * order (1d → 4h → 2h → 1h) and the first fresh signal is taken. Fixed sizing:
+   * 10% of equity as margin at 10x (from DEFAULT_TAD).
+   */
+  private async scanTad(): Promise<string> {
+    const notes: string[] = [];
+    for (const cfg of this.tadSymbols) {
+      if (this.hasPositionFor(cfg.symbol)) {
+        notes.push(`${cfg.symbol}:held`);
+        continue;
+      }
+      let frames: Record<string, Candle[]>;
+      try {
+        frames = await loadTadFrames(cfg.symbol);
+      } catch {
+        notes.push(`${cfg.symbol}:feed-err`);
+        continue;
+      }
+      let hit: string | null = null;
+      for (const tf of TAD_TIMEFRAMES) {
+        const bars = frames[tf];
+        if (!bars || bars.length < 60) continue;
+        const closed = bars.slice(0, -1); // drop the in-progress bar
+        const sig = detectTadSignal(closed, { allowLong: cfg.allowLong, allowShort: cfg.allowShort });
+        if (!sig) continue;
+        const entry = sig.entry;
+        // No fixed target — the trailing Donchian stop is the exit. Park the
+        // takeProfit far away so the risk gate passes and it never caps a run.
+        const takeProfit = sig.side === 'long' ? entry * 4 : entry * 0.01;
+        const risk = Math.abs(entry - sig.stopLoss);
+        const signal: Signal = {
+          id: randomUUID(),
+          time: Date.now(),
+          symbol: cfg.symbol,
+          side: sig.side,
+          entry: round(entry, 2),
+          stopLoss: round(sig.stopLoss, 2),
+          takeProfit: round(takeProfit, 2),
+          riskReward: risk > 0 ? round(Math.abs(takeProfit - entry) / risk, 2) : 99,
+          confluence: Math.max(75, runtime.minConfluence),
+          source: 'engine',
+          reasons: [
+            `TAD ${tf} ${sig.side.toUpperCase()} breakout — Turtle(20) + BB(20,1.0) + EMA50 + volume`,
+            `stop: Donchian-10 trail @ ${round(sig.donTrail, 2)}, hard 5% @ ${round(sig.hardStop, 2)}`,
+          ],
+          marginPctOverride: DEFAULT_TAD.marginPct,
+          leverageOverride: DEFAULT_TAD.leverage,
+        };
+        const before = this.openPositions.length;
+        this.processSignal(signal);
+        if (this.openPositions.length > before) {
+          const p = this.openPositions.at(-1)!;
+          p.strategy = 'tad';
+          p.entryTf = tf;
+          p.hardStop = round(sig.hardStop, 2);
+          this.savePositions();
+          hit = `${cfg.symbol}:${tf} ${sig.side} @ ${round(entry, 2)}`;
+        } else {
+          hit = `${cfg.symbol}:${tf} ${sig.side} rejected`;
+        }
+        break; // first fresh timeframe wins
+      }
+      notes.push(hit ?? `${cfg.symbol}:-`);
+    }
+    return `TAD ${notes.join(' ')}`;
+  }
+
+  /** Trail an open TAD position's stop to the 10-bar Donchian (never past the 5% hard stop). */
+  private async trailTadPosition(pos: Position): Promise<void> {
+    if (pos.strategy !== 'tad' || !pos.entryTf) return;
+    let frames: Record<string, Candle[]>;
+    try {
+      frames = await loadTadFrames(pos.symbol);
+    } catch {
+      return;
+    }
+    const bars = frames[pos.entryTf];
+    if (!bars || bars.length < DEFAULT_TAD.donExit + 2) return;
+    const closed = bars.slice(0, -1);
+    const trail = tadTrailStop(closed, pos.side);
+    if (!Number.isFinite(trail)) return;
+    // Only ever tighten. Floor at the hard 5% stop so a wide early Donchian
+    // can't loosen the invalidation.
+    const floor = pos.hardStop ?? pos.stopLoss;
+    const next =
+      pos.side === 'long'
+        ? Math.max(pos.stopLoss, Math.max(trail, floor))
+        : Math.min(pos.stopLoss, Math.min(trail, floor));
+    if (Math.abs(next - pos.stopLoss) > 1e-9) {
+      logger.info(`${pos.symbol} TAD ${pos.entryTf} trail: stop ${pos.stopLoss} → ${round(next, 2)}`);
+      pos.stopLoss = round(next, 2);
+      this.savePositions();
+    }
   }
 
   /** Online self-learning: after enough closed trades, retune on the buffer. */
@@ -401,6 +514,8 @@ export class TradeEngine extends EventEmitter {
         still.push(pos);
         continue;
       }
+      // TAD: trail the stop to the 10-bar Donchian on the entry timeframe.
+      await this.trailTadPosition(pos);
       // TP1 trail: once price tags the first target, move the stop to breakeven.
       if (pos.tp1 != null && !pos.beMoved) {
         const tp1Hit = pos.side === 'long' ? candle.high >= pos.tp1 : candle.low <= pos.tp1;
@@ -503,6 +618,11 @@ export class TradeEngine extends EventEmitter {
       recentSignals: this.recentSignals,
       stats: this.journal.stats(),
       liquidity: this.lastLiquidity,
+      tad: this.tadSymbols.map((t) => ({
+        symbol: t.symbol,
+        dir: t.allowLong && t.allowShort ? 'long+short' : t.allowLong ? 'long' : 'short',
+      })),
+      maxOpenPositions: config.maxOpenPositions,
       learned: {
         targetMode: this.learned.signal.targetMode,
         stopMode: this.learned.signal.stopMode,

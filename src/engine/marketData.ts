@@ -60,6 +60,37 @@ export function snapshotFromM1(symbol: string, m1: Candle[]): MarketSnapshot {
   };
 }
 
+const TAD_MIRROR = 'https://data-api.binance.vision/api/v3/klines';
+const TAD_BARS = 220; // Donchian-20 + EMA-50 + headroom
+
+/**
+ * Higher-timeframe candles for the TAD breakout strategy (1h/2h/4h/1d), pulled
+ * from the Binance spot public mirror (no key, reachable where the exchange
+ * APIs are geo-blocked). The last row of each series is the in-progress bar —
+ * callers must drop it before evaluating a signal.
+ */
+export async function loadTadFrames(symbol: string): Promise<Record<string, Candle[]>> {
+  const tfs = ['1h', '2h', '4h', '1d'];
+  const pairs = await Promise.all(
+    tfs.map(async (tf) => {
+      const url = `${TAD_MIRROR}?symbol=${symbol}&interval=${tf}&limit=${TAD_BARS}`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) throw new Error(`TAD klines HTTP ${res.status} for ${symbol} ${tf}`);
+      const rows = (await res.json()) as unknown[][];
+      const bars: Candle[] = rows.map((r) => ({
+        time: Number(r[0]),
+        open: +(r[1] as string),
+        high: +(r[2] as string),
+        low: +(r[3] as string),
+        close: +(r[4] as string),
+        volume: +(r[5] as string) || 0,
+      }));
+      return [tf, bars] as const;
+    }),
+  );
+  return Object.fromEntries(pairs);
+}
+
 export function lastPrice(snap: MarketSnapshot): number {
   const series = snap.m1.length ? snap.m1 : snap.m15.length ? snap.m15 : snap.h1;
   return series.at(-1)?.close ?? 0;
