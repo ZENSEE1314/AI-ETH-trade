@@ -39,9 +39,46 @@ export const DEFAULT_TAD: TadOptions = {
   leverage: 10,
 };
 
-/** Priority order — the first timeframe with a fresh signal takes the trade. */
-export const TAD_TIMEFRAMES = ['1d', '4h', '2h', '1h'] as const;
-export type TadTimeframe = (typeof TAD_TIMEFRAMES)[number];
+/**
+ * Priority order — the first timeframe with a fresh signal takes the trade.
+ * Set to 2h then 1h: the daily/4h edge is stronger but signals rarely; the
+ * user wants the faster cadence, so we lean on the intraday frames with a
+ * strict entry-hour whitelist to skip the hours that only pay the spread.
+ * Override with TAD_TIMEFRAMES=1d,4h,2h,1h.
+ */
+export const TAD_TIMEFRAMES: string[] = (process.env.TAD_TIMEFRAMES || '2h,1h')
+  .split(',')
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);
+
+/**
+ * Entry-hour whitelist (UTC) per timeframe. A signal whose breakout bar closed
+ * outside these hours is skipped. From src/backtest/runTadHours.ts (5y, long,
+ * BTC+ETH+BNB): these are the hours with positive avgR and PF > 1.1.
+ * Empty list for a timeframe = no hour filter. Override e.g. TAD_HOURS_1H=3,13.
+ */
+export const TAD_HOUR_WHITELIST: Record<string, number[]> = {
+  '1h': parseHours(process.env.TAD_HOURS_1H, [3, 10, 12, 13, 15, 16]),
+  '2h': parseHours(process.env.TAD_HOURS_2H, [2, 6, 12, 16, 18]),
+  '4h': parseHours(process.env.TAD_HOURS_4H, []),
+  '1d': parseHours(process.env.TAD_HOURS_1D, []),
+};
+
+function parseHours(raw: string | undefined, fallback: number[]): number[] {
+  if (raw === undefined) return fallback;
+  if (raw.trim() === '') return []; // explicit empty = no filter
+  return raw
+    .split(',')
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isInteger(n) && n >= 0 && n <= 23);
+}
+
+/** True when this bar's UTC close-hour is allowed for the timeframe (or unfiltered). */
+export function tadHourAllowed(tf: string, barTimeMs: number): boolean {
+  const allowed = TAD_HOUR_WHITELIST[tf];
+  if (!allowed || allowed.length === 0) return true;
+  return allowed.includes(new Date(barTimeMs).getUTCHours());
+}
 
 export interface TadSignal {
   side: Side;

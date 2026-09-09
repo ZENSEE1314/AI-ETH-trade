@@ -31,7 +31,7 @@ import { buildContext } from '../advisor/context.js';
 import { askAdvisor } from '../advisor/advisor.js';
 import { VwapBandRsiStrategy } from '../strategy/vwapBandRsi.js';
 import { loadTadFrames } from './marketData.js';
-import { detectTadSignal, tadTrailStop, parseTadSymbols, TAD_TIMEFRAMES, DEFAULT_TAD } from '../strategy/tad.js';
+import { detectTadSignal, tadTrailStop, parseTadSymbols, tadHourAllowed, TAD_TIMEFRAMES, DEFAULT_TAD } from '../strategy/tad.js';
 import { randomUUID } from 'node:crypto';
 
 const ADVISOR_MIN_INTERVAL_MS = Number(process.env.ADVISOR_MIN_INTERVAL_MS ?? 15 * 60_000);
@@ -399,7 +399,7 @@ export class TradeEngine extends EventEmitter {
       }
       let frames: Record<string, Candle[]>;
       try {
-        frames = await loadTadFrames(cfg.symbol);
+        frames = await loadTadFrames(cfg.symbol, TAD_TIMEFRAMES);
       } catch {
         notes.push(`${cfg.symbol}:feed-err`);
         continue;
@@ -411,6 +411,11 @@ export class TradeEngine extends EventEmitter {
         const closed = bars.slice(0, -1); // drop the in-progress bar
         const sig = detectTadSignal(closed, { allowLong: cfg.allowLong, allowShort: cfg.allowShort });
         if (!sig) continue;
+        // entry-hour whitelist: skip the UTC hours that only pay the spread
+        if (!tadHourAllowed(tf, closed.at(-1)!.time)) {
+          hit = `${cfg.symbol}:${tf} ${sig.side} off-hours`;
+          continue;
+        }
         const entry = sig.entry;
         // No fixed target — the trailing Donchian stop is the exit. Park the
         // takeProfit far away so the risk gate passes and it never caps a run.
@@ -458,7 +463,7 @@ export class TradeEngine extends EventEmitter {
     if (pos.strategy !== 'tad' || !pos.entryTf) return;
     let frames: Record<string, Candle[]>;
     try {
-      frames = await loadTadFrames(pos.symbol);
+      frames = await loadTadFrames(pos.symbol, [pos.entryTf]);
     } catch {
       return;
     }

@@ -69,10 +69,9 @@ const TAD_BARS = 220; // Donchian-20 + EMA-50 + headroom
  * APIs are geo-blocked). The last row of each series is the in-progress bar —
  * callers must drop it before evaluating a signal.
  */
-export async function loadTadFrames(symbol: string): Promise<Record<string, Candle[]>> {
-  const tfs = ['1h', '2h', '4h', '1d'];
+export async function loadTadFrames(symbol: string, timeframes: string[]): Promise<Record<string, Candle[]>> {
   const pairs = await Promise.all(
-    tfs.map(async (tf) => {
+    timeframes.map(async (tf) => {
       const url = `${TAD_MIRROR}?symbol=${symbol}&interval=${tf}&limit=${TAD_BARS}`;
       const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
       if (!res.ok) throw new Error(`TAD klines HTTP ${res.status} for ${symbol} ${tf}`);
