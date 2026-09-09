@@ -38,6 +38,8 @@ interface Params {
   rsiPeriod: number;
   rsiLo: number; // long when RSI crosses UP through this at the lower band
   rsiHi: number; // short when RSI crosses DOWN through this at the upper band
+  rsiTrigger: 'level' | 'maCross'; // cross a fixed level, or cross the RSI's own MA
+  rsiMaLen: number; // RSI-MA length for the maCross trigger (chart uses 14)
   armBars: number; // bars the band-tag stays valid waiting for the RSI cross
   stopPct: number; // initial hard stop from entry
   targetMode: 'mid' | 'opp' | 'tp1tp2';
@@ -51,6 +53,7 @@ interface Params {
 }
 const BASE: Params = {
   h: 8, mult: 3, maeLen: 100, rsiPeriod: 14, rsiLo: 30, rsiHi: 70,
+  rsiTrigger: 'maCross', rsiMaLen: 14,
   armBars: 6, stopPct: 2, targetMode: 'tp1tp2', scaleFrac: 0.5, tp1LockFrac: 0.75,
   beAtR: 99, maxBars: 48,
 };
@@ -116,6 +119,14 @@ function backtest(c: Candle[], p: Params, onlySide?: 'long' | 'short'): Trade[] 
   const closes = c.map((x) => x.close);
   const nw = nwCausal(closes, p.h);
   const rsi = rsiSeries(closes, p.rsiPeriod);
+  // RSI's own SMA (the yellow line on the chart)
+  const rsiMa = new Array(rsi.length).fill(50);
+  for (let i = 0; i < rsi.length; i++) {
+    const s = Math.max(0, i - p.rsiMaLen + 1);
+    let acc = 0;
+    for (let j = s; j <= i; j++) acc += rsi[j];
+    rsiMa[i] = acc / (i - s + 1);
+  }
   // rolling mean abs error
   const mae = new Array(c.length).fill(0);
   for (let i = 0; i < c.length; i++) {
@@ -189,9 +200,13 @@ function backtest(c: Candle[], p: Params, onlySide?: 'long' | 'short'): Trade[] 
     } else {
       if (i - arm.bar > p.armBars) { arm = null; }
       else {
-        const cross = arm.side === 'long'
-          ? rsi[i - 1] <= p.rsiLo && rsi[i] > p.rsiLo
-          : rsi[i - 1] >= p.rsiHi && rsi[i] < p.rsiHi;
+        const cross = p.rsiTrigger === 'maCross'
+          ? (arm.side === 'long'
+              ? rsi[i - 1] <= rsiMa[i - 1] && rsi[i] > rsiMa[i]
+              : rsi[i - 1] >= rsiMa[i - 1] && rsi[i] < rsiMa[i])
+          : (arm.side === 'long'
+              ? rsi[i - 1] <= p.rsiLo && rsi[i] > p.rsiLo
+              : rsi[i - 1] >= p.rsiHi && rsi[i] < p.rsiHi);
         if (cross) {
           const entry = bar.close;
           const stop = arm.side === 'long' ? entry * (1 - p.stopPct / 100) : entry * (1 + p.stopPct / 100);
@@ -246,6 +261,9 @@ async function main() {
           { name: 'bank 75% at TP1', p: { ...BASE, scaleFrac: 0.75 } },
           { name: 'long only', p: { ...BASE }, side: 'long' as const },
           { name: 'short only', p: { ...BASE }, side: 'short' as const },
+          { name: 'RSI level 30/70', p: { ...BASE, rsiTrigger: 'level' as const } },
+          { name: 'maCross + arm 10', p: { ...BASE, armBars: 10 } },
+          { name: 'maCross long only', p: { ...BASE }, side: 'long' as const },
         ]
       : [{ name: 'base', p: BASE }];
 
