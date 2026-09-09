@@ -17,9 +17,21 @@ function str(name: string, fallback: string): string {
 
 const mode = str('TRADING_MODE', 'paper').toLowerCase() === 'live' ? 'live' : 'paper';
 
+const primarySymbol = str('SYMBOL', 'ETHUSDT');
+
 export const config = {
   port: num('PORT', 3000),
-  symbol: str('SYMBOL', 'ETHUSDT'),
+  symbol: primarySymbol,
+  // Extra symbols the vwapbandrsi strategy also scans (comma-separated). The
+  // primary `symbol` drives the dashboard/bias; a trade can fire on any of
+  // these, still capped by maxOpenPositions.
+  symbols: Array.from(
+    new Set(
+      [primarySymbol, ...str('SYMBOLS', '').split(',')]
+        .map((s) => s.trim().toUpperCase())
+        .filter(Boolean),
+    ),
+  ),
 
   tradingMode: mode as TradingMode,
 

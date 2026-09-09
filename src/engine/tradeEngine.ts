@@ -85,7 +85,17 @@ export class TradeEngine extends EventEmitter {
   private lastAdvisorCallAt = 0;
   private advisorBusy = false;
   private cycleBusy = false; // guards against interval ticks stacking on a slow cycle
-  private vbr = new VwapBandRsiStrategy();
+  // One VwapBandRsiStrategy per scanned symbol (each keeps its own arm state).
+  private vbrBySymbol = new Map<string, VwapBandRsiStrategy>();
+
+  private vbrFor(symbol: string): VwapBandRsiStrategy {
+    let s = this.vbrBySymbol.get(symbol);
+    if (!s) {
+      s = new VwapBandRsiStrategy();
+      this.vbrBySymbol.set(symbol, s);
+    }
+    return s;
+  }
 
   /** Base equity comes from settings so it reflects UI changes on restart. */
   get startEquity(): number {
@@ -188,20 +198,14 @@ export class TradeEngine extends EventEmitter {
       // Hourly liquidity map — the nearest buy/sell pools to read entries from.
       this.lastLiquidity = buildLiquidityMap(snap.h1.length ? snap.h1 : snap.m15);
 
-      this.manageOpenPositions(snap);
+      await this.manageOpenPositions(snap);
       this.maybeRelearn();
 
       let outcome: string;
       if (this.openPositions.length > 0) {
         outcome = `holding ${this.openPositions.length} position(s)`;
       } else if (config.strategy === 'vwapbandrsi') {
-        const signal = this.vbr.evaluate(snap);
-        outcome = signal
-          ? `VBR signal ${signal.side} @ ${signal.entry}`
-          : this.vbr.armed
-          ? 'VBR armed — waiting for RSI cross'
-          : 'VBR no setup';
-        if (signal) this.processSignal(signal);
+        outcome = await this.scanVwapBandRsi(snap);
       } else if (runtime.advisorMode) {
         const waitMs = ADVISOR_MIN_INTERVAL_MS - (Date.now() - this.lastAdvisorCallAt);
         outcome = this.advisorBusy
@@ -329,6 +333,33 @@ export class TradeEngine extends EventEmitter {
     }
   }
 
+  /**
+   * vwapbandrsi strategy: scan every configured symbol (the primary reuses the
+   * cycle's snapshot; the rest get their own fetch). One position at a time —
+   * whichever symbol triggers first takes it. Returns a log summary.
+   */
+  private async scanVwapBandRsi(primary: MarketSnapshot): Promise<string> {
+    const notes: string[] = [];
+    for (const sym of config.symbols) {
+      if (this.openPositions.length > 0) break;
+      let s: MarketSnapshot;
+      try {
+        s = sym === primary.symbol ? primary : await loadSnapshot(sym);
+      } catch (err) {
+        notes.push(`${sym}:feed-err`);
+        continue;
+      }
+      const signal = this.vbrFor(sym).evaluate(s);
+      if (signal) {
+        notes.push(`${sym}:SIGNAL ${signal.side} @ ${signal.entry}`);
+        this.processSignal(signal);
+      } else {
+        notes.push(`${sym}:${this.vbrFor(sym).armed ? 'armed' : '-'}`);
+      }
+    }
+    return `VBR ${notes.join(' ')}`;
+  }
+
   /** Online self-learning: after enough closed trades, retune on the buffer. */
   private maybeRelearn(): void {
     if (this.closedSinceRelearn < RELEARN_EVERY) return;
@@ -342,11 +373,26 @@ export class TradeEngine extends EventEmitter {
   }
 
   /** Close open positions whose stop/target/liquidation was hit on the last candle. */
-  private manageOpenPositions(snap: MarketSnapshot): void {
-    const candle: Candle | undefined = (snap.m1.length ? snap.m1 : snap.m15).at(-1);
-    if (!candle) return;
+  private async manageOpenPositions(snap: MarketSnapshot): Promise<void> {
+    if (this.openPositions.length === 0) return;
     const still: Position[] = [];
     for (const pos of this.openPositions) {
+      // The position may be on a symbol other than the cycle's primary.
+      let candle: Candle | undefined;
+      if (pos.symbol === snap.symbol) {
+        candle = (snap.m1.length ? snap.m1 : snap.m15).at(-1);
+      } else {
+        try {
+          const s = await loadSnapshot(pos.symbol);
+          candle = (s.m1.length ? s.m1 : s.m15).at(-1);
+        } catch {
+          candle = undefined;
+        }
+      }
+      if (!candle) {
+        still.push(pos);
+        continue;
+      }
       // TP1 trail: once price tags the first target, move the stop to breakeven.
       if (pos.tp1 != null && !pos.beMoved) {
         const tp1Hit = pos.side === 'long' ? candle.high >= pos.tp1 : candle.low <= pos.tp1;
