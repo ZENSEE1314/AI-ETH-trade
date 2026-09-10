@@ -226,6 +226,117 @@ async function mainAllHours(m1: Record<string, Candle[]>, dl: Record<string, Can
   }
 }
 
+// ─── Adapted for crypto: fade ANY manipulation candle, any time of day ───
+// "mostly this happens in crypto too" — so drop the market-open constraint.
+// Scan every 15m candle: if its range ≥ atrFrac·DailyATR AND it has a decisive
+// body (|close-open| ≥ 0.6·range), it's a manipulation candle. Fade it —
+// GREEN → short limit at its high, RED → long limit at its low. "Touch & turn":
+// wait up to `touchBars` 15m bars for price to return to that level, then fill.
+// TP = Fib retracement of the candle; SL = ½ TP dist (2:1). Hold ≤ holdBars.
+function resample15m(m1: Candle[]): Candle[] {
+  const out: Candle[] = [];
+  let cur: Candle | null = null;
+  let bucket = -1;
+  for (const c of m1) {
+    const b = Math.floor(c.time / (15 * MIN));
+    if (b !== bucket) { if (cur) out.push(cur); cur = { ...c, time: b * 15 * MIN }; bucket = b; }
+    else if (cur) { cur.high = Math.max(cur.high, c.high); cur.low = Math.min(cur.low, c.low); cur.close = c.close; cur.volume += c.volume; }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+interface AnyTrade { entryTime: number; hour: number; side: 'long' | 'short'; rMultiple: number; pctReturn: number; outcome: 'tp' | 'sl' | 'timeout'; }
+
+function backtestAny(m1: Candle[], daily: Candle[], tpFrac: number, atrFrac: number, opts: {
+  bodyFrac: number; touchBars: number; holdBars: number; cooldownBars: number; onlySide?: 'long' | 'short';
+}): AnyTrade[] {
+  const c15 = resample15m(m1);
+  const atrByDay = atr14(daily);
+  const trades: AnyTrade[] = [];
+  let busyUntil = 0;
+
+  for (let i = 20; i < c15.length - opts.holdBars - 2; i++) {
+    if (i < busyUntil) continue;
+    const cand = c15[i];
+    const range = cand.high - cand.low;
+    if (range <= 0) continue;
+    const atr = atrByDay.get(dayKey(cand.time));
+    if (!atr || range < atrFrac * atr) continue;
+    if (Math.abs(cand.close - cand.open) < opts.bodyFrac * range) continue; // needs a decisive body
+
+    const green = cand.close >= cand.open;
+    const side: 'long' | 'short' = green ? 'short' : 'long';
+    if (opts.onlySide && side !== opts.onlySide) continue;
+    const entryPx = green ? cand.high : cand.low;
+    const tpDist = tpFrac * range;
+    const tp = side === 'long' ? entryPx + tpDist : entryPx - tpDist;
+    const sl = side === 'long' ? entryPx - tpDist / 2 : entryPx + tpDist / 2;
+
+    // touch & turn: wait for price to return to the level
+    let fillIdx = -1;
+    for (let k = i + 1; k <= i + opts.touchBars && k < c15.length; k++) {
+      const b = c15[k];
+      if ((side === 'long' && b.low <= entryPx) || (side === 'short' && b.high >= entryPx)) { fillIdx = k; break; }
+      // invalidated if price runs to the TP without us (already reverted) — skip
+      if ((side === 'long' && b.low <= tp) || (side === 'short' && b.high >= tp)) { fillIdx = -2; break; }
+    }
+    if (fillIdx < 0) continue;
+
+    const dir = side === 'long' ? 1 : -1;
+    let exitPx = entryPx, outcome: AnyTrade['outcome'] = 'timeout';
+    for (let k = fillIdx + 1; k <= fillIdx + opts.holdBars && k < c15.length; k++) {
+      const b = c15[k];
+      const hitSl = side === 'long' ? b.low <= sl : b.high >= sl;
+      const hitTp = side === 'long' ? b.high >= tp : b.low <= tp;
+      if (hitSl) { exitPx = sl; outcome = 'sl'; break; }
+      if (hitTp) { exitPx = tp; outcome = 'tp'; break; }
+      exitPx = b.close;
+    }
+    const net = (dir * (exitPx - entryPx)) / entryPx - 2 * COST;
+    const riskPct = (tpDist / 2) / entryPx;
+    trades.push({ entryTime: c15[fillIdx].time, hour: new Date(c15[fillIdx].time).getUTCHours(), side, rMultiple: net / riskPct, pctReturn: net, outcome });
+    busyUntil = fillIdx + opts.cooldownBars;
+  }
+  return trades;
+}
+
+const aStats = (ts: AnyTrade[]) => {
+  const n = ts.length;
+  const w = ts.filter((t) => t.pctReturn > 0).length;
+  const gW = ts.filter((t) => t.rMultiple > 0).reduce((s, t) => s + t.rMultiple, 0);
+  const gL = -ts.filter((t) => t.rMultiple < 0).reduce((s, t) => s + t.rMultiple, 0);
+  const totR = ts.reduce((s, t) => s + t.rMultiple, 0);
+  let eq = 1000;
+  for (const t of ts) { eq += eq * 0.1 * 10 * t.pctReturn; if (eq < 0) eq = 0; }
+  return { n, wr: n ? w / n * 100 : 0, pf: gL > 0 ? gW / gL : n ? 99 : 0, totR, eq };
+};
+
+async function mainAny(m1: Record<string, Candle[]>, dl: Record<string, Candle[]>) {
+  console.log(`\n═══ ADAPTED FOR CRYPTO — fade ANY manipulation candle, any time ═══`);
+  console.log(`15m candle · range ≥ ${ATR_FRAC * 100}% Daily ATR · body ≥ 60% of range · touch&turn ≤ 8h · TP Fib · SL ½ TP (2:1)\n`);
+  const opts = { bodyFrac: 0.6, touchBars: 32, holdBars: 96, cooldownBars: 8 };
+  for (const tpFrac of TP_FRACS) {
+    console.log(`── TP ${tpFrac === 0.382 ? '38.2%' : '61.8%'} ──`);
+    for (const dir of [undefined, 'long', 'short'] as const) {
+      const port: AnyTrade[] = [];
+      for (const s of SYMBOLS) port.push(...backtestAny(m1[s], dl[s], tpFrac, ATR_FRAC, { ...opts, onlySide: dir }));
+      port.sort((a, b) => a.entryTime - b.entryTime);
+      const st = aStats(port);
+      console.log(`  ${(dir ?? 'both').padEnd(6)} ${String(st.n).padStart(4)} trades  WR ${st.wr.toFixed(0)}%  PF ${st.pf.toFixed(2)}  totR ${st.totR.toFixed(0)}  $1k→ ${st.eq.toFixed(0)} (10x)`);
+      if (!dir) {
+        const rows = [];
+        for (let h = 0; h < 24; h++) { const g = port.filter((t) => t.hour === h); if (g.length >= 10) rows.push({ h, st: aStats(g) }); }
+        rows.sort((a, b) => b.st.wr - a.st.wr);
+        for (const r of rows.slice(0, 6)) {
+          const mk = r.st.wr >= 45 && r.st.totR > 0 ? ' ★' : '';
+          console.log(`     ${String(r.h).padStart(2)}h  n${String(r.st.n).padStart(3)}  WR ${r.st.wr.toFixed(0)}%  PF ${r.st.pf.toFixed(2)}  totR ${r.st.totR.toFixed(0)}${mk}`);
+        }
+      }
+    }
+  }
+}
+
 async function main() {
   console.log(`\nTOUCH & TURN SCALPER — 15m opening range, fade the liquidity candle, Fib TP · ${DAYS}d · 7bps/side`);
   console.log(`filter: opening range ≥ ${ATR_FRAC * 100}% of Daily ATR(14) · fill ≤90m · SL = ½ TP dist (2:1) · sizing 10% margin @10x\n`);
@@ -240,6 +351,7 @@ async function main() {
   }
 
   if (process.argv.includes('--allHours')) { await mainAllHours(m1, dl); console.log(); return; }
+  if (process.argv.includes('--any')) { await mainAny(m1, dl); console.log(); return; }
 
   for (const open of OPENS) {
     console.log(`\n═══ open ${open} UTC ${open === '13:30' ? '(NYSE, weekdays)' : '(daily)'} ═══`);
