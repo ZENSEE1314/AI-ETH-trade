@@ -104,6 +104,11 @@ function nwCausal(closes: number[], h: number): number[] {
   return out;
 }
 
+/** ohlc4 = (open+high+low+close)/4 — the RSI source Coach Jaz uses. */
+function ohlc4(c: Candle[]): number[] {
+  return c.map((b) => (b.open + b.high + b.low + b.close) / 4);
+}
+
 function rsiSeries(closes: number[], period: number): number[] {
   const out = new Array(closes.length).fill(50);
   if (closes.length < period + 1) return out;
@@ -157,7 +162,7 @@ interface Trade { side: 'long' | 'short'; entryTime: number; hour: number; rMult
 function backtest(c: Candle[], p: Params, onlySide?: 'long' | 'short'): Trade[] {
   const closes = c.map((x) => x.close);
   const nw = nwCausal(closes, p.h);
-  const rsi = rsiSeries(closes, p.rsiPeriod);
+  const rsi = rsiSeries(ohlc4(c), p.rsiPeriod); // Coach Jaz: RSI source = ohlc4
   // RSI's own SMA (the yellow line on the chart)
   const rsiMa = new Array(rsi.length).fill(50);
   for (let i = 0; i < rsi.length; i++) {
