@@ -61,7 +61,7 @@ interface Params {
 const BASE: Params = {
   h: 8, mult: 3, maeLen: 100, rsiPeriod: 3, rsiLo: 30, rsiHi: 70,
   rsiTrigger: 'maCross', rsiMaLen: 14,
-  armBars: 6, stopPct: 5, targetMode: 'tp1tp2', scaleFrac: 0.5, tp1LockFrac: 0.75,
+  armBars: 6, stopPct: 0.5, targetMode: 'tp1tp2', scaleFrac: 0.5, tp1LockFrac: 0.75,
   beAtR: 99, maxBars: 48,
   rangeFilter: false, rangeLookback: 20, rangeMaxSlopePct: 1.2, rangeAdxMax: 25,
 };
