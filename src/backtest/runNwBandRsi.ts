@@ -58,7 +58,7 @@ interface Params {
   rangeAdxMax: number;
 }
 const BASE: Params = {
-  h: 8, mult: 3, maeLen: 100, rsiPeriod: 14, rsiLo: 30, rsiHi: 70,
+  h: 8, mult: 3, maeLen: 100, rsiPeriod: 3, rsiLo: 30, rsiHi: 70,
   rsiTrigger: 'maCross', rsiMaLen: 14,
   armBars: 6, stopPct: 3, targetMode: 'tp1tp2', scaleFrac: 0.5, tp1LockFrac: 0.75,
   beAtR: 99, maxBars: 48,
