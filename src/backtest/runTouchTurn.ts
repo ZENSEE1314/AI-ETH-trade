@@ -183,6 +183,49 @@ function stats(ts: Trade[]) {
   return { n, wr: n ? w / n * 100 : 0, pf: gL > 0 ? gW / gL : n ? 99 : 0, totR, eqSpot, eqLev, nofill, tp, sl, to };
 }
 
+async function mainAllHours(m1: Record<string, Candle[]>, dl: Record<string, Candle[]>) {
+  console.log(`\n═══ ALL 24 UTC "open" hours — ranked by win rate ═══`);
+  for (const tpFrac of TP_FRACS) {
+    console.log(`\n── TP = ${tpFrac === 0.382 ? '38.2%' : '61.8%'} Fib · SL = ½ TP (2:1) ──`);
+    const rows: { hh: string; st: ReturnType<typeof stats>; longs: number; shorts: number }[] = [];
+    for (let h = 0; h < 24; h++) {
+      const hh = `${String(h).padStart(2, '0')}:00`;
+      const all: Trade[] = [];
+      for (const s of SYMBOLS) all.push(...backtest(m1[s], dl[s], hh, tpFrac));
+      const st = stats(all);
+      const filled = all.filter((t) => t.outcome !== 'nofill');
+      rows.push({ hh, st, longs: filled.filter((t) => t.side === 'long').length, shorts: filled.filter((t) => t.side === 'short').length });
+    }
+    rows.sort((a, b) => b.st.wr - a.st.wr);
+    console.log(`  hr     n   WR%    PF   totR   tp/sl   L/S    $1k→(10x)`);
+    for (const r of rows) {
+      const { st } = r;
+      if (st.n < 6) continue;
+      const mark = st.wr >= 50 && st.totR > 0 ? '  ★' : st.wr >= 45 && st.totR > 0 ? '  ·' : '';
+      console.log(
+        `  ${r.hh}  ${String(st.n).padStart(3)}  ${st.wr.toFixed(0).padStart(3)}  ${st.pf.toFixed(2).padStart(5)}  ${st.totR.toFixed(0).padStart(5)}  ${String(st.tp).padStart(2)}/${String(st.sl).padStart(2)}  ${String(r.longs).padStart(2)}/${String(r.shorts).padStart(2)}  ${st.eqLev.toFixed(0).padStart(6)}${mark}`,
+      );
+    }
+  }
+  // best single (hour, direction, tp) cell
+  console.log(`\n── best (hour × direction × TP), n ≥ 6 ──`);
+  const cells: { tag: string; st: ReturnType<typeof stats> }[] = [];
+  for (const tpFrac of TP_FRACS) for (let h = 0; h < 24; h++) {
+    const hh = `${String(h).padStart(2, '0')}:00`;
+    const all: Trade[] = [];
+    for (const s of SYMBOLS) all.push(...backtest(m1[s], dl[s], hh, tpFrac));
+    for (const dir of ['long', 'short'] as const) {
+      const sub = all.filter((t) => t.side === dir);
+      const st = stats(sub);
+      if (st.n >= 6) cells.push({ tag: `${hh} ${dir.padEnd(5)} TP${tpFrac === 0.382 ? '38' : '62'}`, st });
+    }
+  }
+  cells.sort((a, b) => b.st.wr - a.st.wr);
+  for (const c of cells.slice(0, 12)) {
+    console.log(`  ${c.tag}  n${String(c.st.n).padStart(3)}  WR ${c.st.wr.toFixed(0)}%  PF ${c.st.pf.toFixed(2)}  totR ${c.st.totR.toFixed(0)}  $1k→ ${c.st.eqLev.toFixed(0)} (10x)`);
+  }
+}
+
 async function main() {
   console.log(`\nTOUCH & TURN SCALPER — 15m opening range, fade the liquidity candle, Fib TP · ${DAYS}d · 7bps/side`);
   console.log(`filter: opening range ≥ ${ATR_FRAC * 100}% of Daily ATR(14) · fill ≤90m · SL = ½ TP dist (2:1) · sizing 10% margin @10x\n`);
@@ -195,6 +238,8 @@ async function main() {
     dl[s] = await fetchDaily(s, DAYS);
     console.log(` ${m1[s].length} m1 bars`);
   }
+
+  if (process.argv.includes('--allHours')) { await mainAllHours(m1, dl); console.log(); return; }
 
   for (const open of OPENS) {
     console.log(`\n═══ open ${open} UTC ${open === '13:30' ? '(NYSE, weekdays)' : '(daily)'} ═══`);
