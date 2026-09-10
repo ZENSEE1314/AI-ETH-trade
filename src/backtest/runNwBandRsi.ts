@@ -27,6 +27,7 @@ const arg = (n: string, d: string) => {
 const TFS = arg('tf', '1h,2h,4h,1d').split(',');
 const HOURS = process.argv.includes('--hours');
 const GRID = process.argv.includes('--grid');
+const LEV = Number(arg('lev', '10'));
 
 const TF_MS: Record<string, number> = { '15m': 900_000, '30m': 1_800_000, '1h': 3_600_000, '2h': 7_200_000, '4h': 14_400_000, '1d': 86_400_000 };
 const CAP_DAYS: Record<string, number> = { '15m': 540, '30m': 900, '1h': 1460, '2h': 1825, '4h': 2555, '1d': 3200 };
@@ -60,7 +61,7 @@ interface Params {
 const BASE: Params = {
   h: 8, mult: 3, maeLen: 100, rsiPeriod: 3, rsiLo: 30, rsiHi: 70,
   rsiTrigger: 'maCross', rsiMaLen: 14,
-  armBars: 6, stopPct: 3, targetMode: 'tp1tp2', scaleFrac: 0.5, tp1LockFrac: 0.75,
+  armBars: 6, stopPct: 5, targetMode: 'tp1tp2', scaleFrac: 0.5, tp1LockFrac: 0.75,
   beAtR: 99, maxBars: 48,
   rangeFilter: false, rangeLookback: 20, rangeMaxSlopePct: 1.2, rangeAdxMax: 25,
 };
@@ -356,7 +357,7 @@ async function main() {
           const mark = r.st.wr >= 45 && r.st.totR > 0 ? ' ★' : r.st.wr >= 40 && r.st.totR > 0 ? ' ·' : '';
           // $1000 @ 10% margin, 10x, only this hour's trades — $/month
           const g = port.filter((t) => t.hour === r.hr);
-          const e = levSim(g, 10);
+          const e = levSim(g, LEV);
           const perMo = (e.eq - 1000) / spanMonths;
           console.log(`     ${String(r.hr).padStart(2)}h  n${String(r.st.n).padStart(3)}  WR ${r.st.wr.toFixed(0).padStart(3)}%  PF ${r.st.pf.toFixed(2)}  totR ${r.st.totR.toFixed(0).padStart(4)}   $1k@10x→ $${e.eq.toFixed(0).padStart(5)}  (${perMo >= 0 ? '+' : ''}$${perMo.toFixed(0)}/mo)${mark}`);
         }
