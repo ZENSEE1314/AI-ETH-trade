@@ -94,7 +94,7 @@ function run(c: Candle[], sym: string, slOverride?: number | null): Trade[] {
     const stop = side === 'long' ? entry * (1 - slPct / 100) : entry * (1 + slPct / 100);
     const risk = entry * (STOP_PCT / 100); // R unit stays 0.5% for comparability even with no stop
     const dir = side === 'long' ? 1 : -1;
-    let banked = 0, remaining = 1, curStop = stop, tookTp1 = false, legs = 1, exitPx = entry, reason = 'timeout';
+    let banked = 0, remaining = 1, curStop = stop, tookTp1 = false, legs = 1, exitPx = entry, reason = 'timeout', tp1Px = entry;
     let worstAdvPct = 0;
     for (let k = i + 1; k < Math.min(c.length, i + 1 + MAX_BARS); k++) {
       const x = c[k];
@@ -107,7 +107,9 @@ function run(c: Candle[], sym: string, slOverride?: number | null): Trade[] {
       if (!tookTp1) {
         const mid = nw[k];
         const hitMid = side === 'long' ? x.high >= mid : x.low <= mid;
-        if (hitMid) { banked += 0.5 * dir * (mid - entry) / entry; remaining -= 0.5; curStop = entry; tookTp1 = true; legs++; reason = 'tp1'; continue; }
+        // TP1: bank 50% at the middle line, then the runner's stop = the TP1 price
+        // (so if TP2 isn't reached, we exit at TP1 with the gain locked).
+        if (hitMid) { banked += 0.5 * dir * (mid - entry) / entry; remaining -= 0.5; curStop = mid; tp1Px = mid; tookTp1 = true; legs++; reason = 'tp1'; continue; }
       } else {
         const band = side === 'long' ? up(k) : lo(k);
         const hitBand = side === 'long' ? x.high >= band : x.low <= band;
