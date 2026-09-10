@@ -82,8 +82,9 @@ async function main() {
     for (let i = MAE_LEN + 5; i < c.length; i++) {
       const b = c[i];
       if (!arm) {
-        if (b.high >= up(i)) arm = { side: 'short', bar: i };
-        else if (b.low <= lo(i)) arm = { side: 'long', bar: i };
+        // must CLOSE fully outside the band (not just wick-touch it)
+        if (b.close > up(i)) arm = { side: 'short', bar: i };
+        else if (b.close < lo(i)) arm = { side: 'long', bar: i };
         continue;
       }
       if (i - arm.bar > ARM) { arm = null; continue; }

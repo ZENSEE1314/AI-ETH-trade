@@ -108,8 +108,8 @@ function run(c: Candle[], f: F): T[] {
   for (let i = Math.max(MAE_LEN, 210) + 5; i < c.length; i++) {
     const b = c[i];
     if (!arm) {
-      if (b.high >= up(i)) arm = { side: 'short', bar: i };
-      else if (b.low <= lo(i)) arm = { side: 'long', bar: i };
+      if (b.close > up(i)) arm = { side: 'short', bar: i };
+      else if (b.close < lo(i)) arm = { side: 'long', bar: i };
       continue;
     }
     if (i - arm.bar > ARM) { arm = null; continue; }
