@@ -58,8 +58,8 @@ interface Params {
   rangeAdxMax: number;
 }
 const BASE: Params = {
-  h: 8, mult: 3, maeLen: 100, rsiPeriod: 14, rsiLo: 30, rsiHi: 70,
-  rsiTrigger: 'maCross', rsiMaLen: 14,
+  h: 8, mult: 3, maeLen: 100, rsiPeriod: 3, rsiLo: 15, rsiHi: 85,
+  rsiTrigger: 'level', rsiMaLen: 14,
   armBars: 6, stopPct: 2, targetMode: 'tp1tp2', scaleFrac: 0.5, tp1LockFrac: 0.75,
   beAtR: 99, maxBars: 48,
   rangeFilter: false, rangeLookback: 20, rangeMaxSlopePct: 1.2, rangeAdxMax: 25,
@@ -354,6 +354,15 @@ async function main() {
         for (const r of rows) {
           const mark = r.st.wr >= 45 && r.st.totR > 0 ? ' ★' : r.st.wr >= 40 && r.st.totR > 0 ? ' ·' : '';
           console.log(`     ${String(r.hr).padStart(2)}h  n${String(r.st.n).padStart(3)}  WR ${r.st.wr.toFixed(0).padStart(3)}%  PF ${r.st.pf.toFixed(2)}  totR ${r.st.totR.toFixed(0).padStart(4)}${mark}`);
+        }
+        // out-of-sample check for the best hour: split first half / second half by time
+        const best = rows.slice().sort((a, b) => b.st.totR - a.st.totR)[0];
+        if (best) {
+          const g = port.filter((t) => t.hour === best.hr).sort((a, b) => a.entryTime - b.entryTime);
+          const mid = g[Math.floor(g.length / 2)]?.entryTime ?? 0;
+          const h1 = stats(g.filter((t) => t.entryTime < mid));
+          const h2 = stats(g.filter((t) => t.entryTime >= mid));
+          console.log(`     └ ${best.hr}h OOS split: 1st half WR ${h1.wr.toFixed(0)}%/${h1.totR.toFixed(0)}R (n${h1.n})  ·  2nd half WR ${h2.wr.toFixed(0)}%/${h2.totR.toFixed(0)}R (n${h2.n})`);
         }
       }
     }
