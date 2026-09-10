@@ -24,7 +24,9 @@ const YEARS = Number(arg('years', '3'));
 const STOP_PCT = Number(arg('stop', '0.5'));
 const RSI_LEN = Number(arg('rsi', '14'));
 const RSI_MA = Number(arg('rsima', '14'));
-const H = 8, MULT = 3, MAE_LEN = 100, ARM = 6, MAX_BARS = 48;
+const NOSL = process.argv.includes('--nosl');
+const H = 8, MULT = 3, MAE_LEN = 100, ARM = 6;
+const MAX_BARS = NOSL ? Number(arg('hold', '240')) : 48; // no-stop → hold longer ("price comes back")
 const TF_MS: Record<string, number> = { '1h': 3_600_000, '2h': 7_200_000, '4h': 14_400_000 };
 
 async function fetchK(sym: string): Promise<Candle[]> {
@@ -62,7 +64,7 @@ function rsiS(v: number[], len: number): number[] {
 const ohlc4 = (c: Candle[]) => c.map((b) => (b.open + b.high + b.low + b.close) / 4);
 const sma = (v: number[], i: number, len: number) => { const s = Math.max(0, i - len + 1); let a = 0; for (let j = s; j <= i; j++) a += v[j]; return a / (i - s + 1); };
 
-interface Trade { sym: string; time: number; side: 'long' | 'short'; entry: number; rr: number; pctRet: number; reason: string; }
+interface Trade { sym: string; time: number; side: 'long' | 'short'; entry: number; rr: number; pctRet: number; reason: string; worstAdvPct: number; }
 
 function run(c: Candle[], sym: string): Trade[] {
   const cl = c.map((x) => x.close);
@@ -88,13 +90,18 @@ function run(c: Candle[], sym: string): Trade[] {
     const side = arm.side; arm = null;
     const entry = b.close;
     const stop = side === 'long' ? entry * (1 - STOP_PCT / 100) : entry * (1 + STOP_PCT / 100);
-    const risk = Math.abs(entry - stop);
+    const risk = entry * (STOP_PCT / 100); // R unit stays 0.5% for comparability even with no stop
     const dir = side === 'long' ? 1 : -1;
     let banked = 0, remaining = 1, curStop = stop, tookTp1 = false, legs = 1, exitPx = entry, reason = 'timeout';
+    let worstAdvPct = 0;
     for (let k = i + 1; k < Math.min(c.length, i + 1 + MAX_BARS); k++) {
       const x = c[k];
-      const hitStop = side === 'long' ? x.low <= curStop : x.high >= curStop;
+      const adv = side === 'long' ? (entry - x.low) / entry * 100 : (x.high - entry) / entry * 100;
+      if (adv > worstAdvPct) worstAdvPct = adv;
+      const hitStop = !NOSL && (side === 'long' ? x.low <= curStop : x.high >= curStop);
       if (hitStop) { banked += remaining * dir * (curStop - entry) / entry; remaining = 0; reason = tookTp1 ? 'be' : 'stop'; break; }
+      // no-stop mode still moves to breakeven after TP1
+      if (NOSL && tookTp1) { const be = side === 'long' ? x.low <= entry : x.high >= entry; if (be) { banked += remaining * dir * (entry - entry) / entry; remaining = 0; reason = 'be'; break; } }
       if (!tookTp1) {
         const mid = nw[k];
         const hitMid = side === 'long' ? x.high >= mid : x.low <= mid;
@@ -108,7 +115,7 @@ function run(c: Candle[], sym: string): Trade[] {
     }
     if (remaining > 0) banked += remaining * dir * (exitPx - entry) / entry;
     const net = banked - legs * COST;
-    out.push({ sym, time: b.time, side, entry, rr: net / (risk / entry), pctRet: net, reason });
+    out.push({ sym, time: b.time, side, entry, rr: net / (risk / entry), pctRet: net, reason, worstAdvPct });
   }
   return out;
 }
@@ -125,9 +132,22 @@ function report(label: string, ts: Trade[], months: number) {
   // worst losing streak
   let streak = 0, worst = 0;
   for (const t of ts) { if (t.pctRet <= 0) { streak++; worst = Math.max(worst, streak); } else streak = 0; }
-  const tp1 = ts.filter((t) => t.reason === 'tp1').length, tp2 = ts.filter((t) => t.reason === 'tp2').length, stop = ts.filter((t) => t.reason === 'stop').length;
-  const eq = (lev: number) => { let e = 1000; for (const t of ts) { e += e * 0.1 * lev * t.pctRet; if (e < 0) return 0; } return e; };
-  console.log(`  ${label.padEnd(10)} n=${String(n).padStart(3)}  WR ${(w.length / n * 100).toFixed(0)}%  PF ${gL > 0 ? (gW / gL).toFixed(2) : '∞'}  exp ${exp.toFixed(2)}R  avgW +${avgW.toFixed(2)}R avgL ${avgL.toFixed(2)}R  worst streak ${worst}  (${tp1} tp1 / ${tp2} tp2 / ${stop} stop)`);
+  const tp1 = ts.filter((t) => t.reason === 'tp1').length, tp2 = ts.filter((t) => t.reason === 'tp2').length, stop = ts.filter((t) => t.reason === 'stop').length, be = ts.filter((t) => t.reason === 'be').length, to = ts.filter((t) => t.reason === 'timeout').length;
+  const worstAdv = Math.max(...ts.map((t) => t.worstAdvPct));
+  const worstLoss = Math.min(...ts.map((t) => t.pctRet)) * 100;
+  // liquidation-aware equity: at 10x, a >~9.5% adverse excursion = liquidated (lose the 10% margin)
+  const eq = (lev: number) => {
+    let e = 1000;
+    for (const t of ts) {
+      const liqAt = 100 / lev - (lev >= 50 ? 0.5 : lev >= 10 ? 0.3 : 0.1);
+      if (lev > 1 && t.worstAdvPct >= liqAt) { e -= e * 0.1; if (e < 0) return 0; continue; }
+      e += e * 0.1 * lev * t.pctRet;
+      if (e < 0) return 0;
+    }
+    return e;
+  };
+  console.log(`  ${label.padEnd(10)} n=${String(n).padStart(3)}  WR ${(w.length / n * 100).toFixed(0)}%  PF ${gL > 0 ? (gW / gL).toFixed(2) : '∞'}  exp ${exp.toFixed(2)}R  avgW +${avgW.toFixed(2)}R avgL ${avgL.toFixed(2)}R  streak ${worst}  (${tp1}tp1/${tp2}tp2/${be}be/${stop}stop/${to}timeout)`);
+  console.log(`             worst adverse move ${worstAdv.toFixed(1)}%  ·  worst single trade ${worstLoss.toFixed(1)}%`);
   console.log(`             $1000 → 1x $${eq(1).toFixed(0)}  ·  3x $${eq(3).toFixed(0)}  ·  5x $${eq(5).toFixed(0)}  ·  10x $${eq(10).toFixed(0)}   (${((eq(5) - 1000) / months).toFixed(0)} $/mo at 5x)`);
 }
 
