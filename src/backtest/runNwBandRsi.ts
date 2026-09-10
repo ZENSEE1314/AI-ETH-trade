@@ -59,10 +59,10 @@ interface Params {
 }
 const BASE: Params = {
   h: 8, mult: 3, maeLen: 100, rsiPeriod: 14, rsiLo: 30, rsiHi: 70,
-  rsiTrigger: 'level', rsiMaLen: 14,
+  rsiTrigger: 'maCross', rsiMaLen: 14,
   armBars: 6, stopPct: 2, targetMode: 'tp1tp2', scaleFrac: 0.5, tp1LockFrac: 0.75,
   beAtR: 99, maxBars: 48,
-  rangeFilter: true, rangeLookback: 20, rangeMaxSlopePct: 1.2, rangeAdxMax: 25,
+  rangeFilter: false, rangeLookback: 20, rangeMaxSlopePct: 1.2, rangeAdxMax: 25,
 };
 
 async function fetchAll(symbol: string, tf: string): Promise<Candle[]> {
@@ -341,6 +341,21 @@ async function main() {
         return (tag + (r.liq ? `│${r.liq}` : '')).padStart(9);
       }).join(''));
       console.log(`   ` + LEVS.map((L) => `${levSim(port, L).maxDdPct.toFixed(0)}%dd`.padStart(9)).join(''));
+
+      if (HOURS && d.name === 'long+short') {
+        console.log(`   by UTC entry hour (both dirs):`);
+        const rows = [];
+        for (let hr = 0; hr < 24; hr++) {
+          const g = port.filter((t) => t.hour === hr);
+          if (g.length < 8) continue;
+          rows.push({ hr, st: stats(g) });
+        }
+        rows.sort((a, b) => b.st.wr - a.st.wr);
+        for (const r of rows) {
+          const mark = r.st.wr >= 45 && r.st.totR > 0 ? ' ★' : r.st.wr >= 40 && r.st.totR > 0 ? ' ·' : '';
+          console.log(`     ${String(r.hr).padStart(2)}h  n${String(r.st.n).padStart(3)}  WR ${r.st.wr.toFixed(0).padStart(3)}%  PF ${r.st.pf.toFixed(2)}  totR ${r.st.totR.toFixed(0).padStart(4)}${mark}`);
+        }
+      }
     }
   }
   console.log(`\nNW repaints on the chart — corrected here via a causal estimate. "│N" = N liquidations.\n`);
