@@ -21,7 +21,6 @@ import type { Candle } from '../types.js';
 
 const MIRROR = 'https://data-api.binance.vision/api/v3/klines';
 const CACHE = join(process.cwd(), 'data');
-const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT'];
 const COST = 7 / 10_000;
 const MIN = 60_000;
 
@@ -31,6 +30,7 @@ const arg = (n: string, d: string) => {
   const i = process.argv.indexOf(`--${n}`);
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : d;
 };
+const SYMBOLS = arg('syms', 'BTCUSDT,ETHUSDT,BNBUSDT,PAXGUSDT').split(',');
 const DAYS = Number(arg('days', '150'));
 const OPENS = arg('open', '13:30,00:00,08:00').split(',');
 const ATR_FRAC = Number(arg('atrFrac', '0.25')); // liquidity-candle threshold
