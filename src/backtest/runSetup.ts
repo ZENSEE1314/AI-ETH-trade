@@ -66,7 +66,9 @@ const sma = (v: number[], i: number, len: number) => { const s = Math.max(0, i -
 
 interface Trade { sym: string; time: number; side: 'long' | 'short'; entry: number; rr: number; pctRet: number; reason: string; worstAdvPct: number; }
 
-function run(c: Candle[], sym: string): Trade[] {
+function run(c: Candle[], sym: string, slOverride?: number | null): Trade[] {
+  const slPct: number = slOverride === undefined ? STOP_PCT : (slOverride ?? 0);
+  const noStop = NOSL || slOverride === null;
   const cl = c.map((x) => x.close);
   const nw = nwCausal(cl);
   const rsi = rsiS(ohlc4(c), RSI_LEN);
@@ -89,7 +91,7 @@ function run(c: Candle[], sym: string): Trade[] {
     if (!cross) continue;
     const side = arm.side; arm = null;
     const entry = b.close;
-    const stop = side === 'long' ? entry * (1 - STOP_PCT / 100) : entry * (1 + STOP_PCT / 100);
+    const stop = side === 'long' ? entry * (1 - slPct / 100) : entry * (1 + slPct / 100);
     const risk = entry * (STOP_PCT / 100); // R unit stays 0.5% for comparability even with no stop
     const dir = side === 'long' ? 1 : -1;
     let banked = 0, remaining = 1, curStop = stop, tookTp1 = false, legs = 1, exitPx = entry, reason = 'timeout';
@@ -98,10 +100,10 @@ function run(c: Candle[], sym: string): Trade[] {
       const x = c[k];
       const adv = side === 'long' ? (entry - x.low) / entry * 100 : (x.high - entry) / entry * 100;
       if (adv > worstAdvPct) worstAdvPct = adv;
-      const hitStop = !NOSL && (side === 'long' ? x.low <= curStop : x.high >= curStop);
+      const hitStop = !noStop && (side === 'long' ? x.low <= curStop : x.high >= curStop);
       if (hitStop) { banked += remaining * dir * (curStop - entry) / entry; remaining = 0; reason = tookTp1 ? 'be' : 'stop'; break; }
       // no-stop mode still moves to breakeven after TP1
-      if (NOSL && tookTp1) { const be = side === 'long' ? x.low <= entry : x.high >= entry; if (be) { banked += remaining * dir * (entry - entry) / entry; remaining = 0; reason = 'be'; break; } }
+      if (noStop && tookTp1) { const be = side === 'long' ? x.low <= entry : x.high >= entry; if (be) { remaining = 0; reason = 'be'; break; } }
       if (!tookTp1) {
         const mid = nw[k];
         const hitMid = side === 'long' ? x.high >= mid : x.low <= mid;
@@ -151,10 +153,50 @@ function report(label: string, ts: Trade[], months: number) {
   console.log(`             $1000 → 1x $${eq(1).toFixed(0)}  ·  3x $${eq(3).toFixed(0)}  ·  5x $${eq(5).toFixed(0)}  ·  10x $${eq(10).toFixed(0)}   (${((eq(5) - 1000) / months).toFixed(0)} $/mo at 5x)`);
 }
 
+function sweepSim(ts: Trade[], lev: number) {
+  let eq = 1000, peak = 1000, dd = 0, liq = 0, wins = 0;
+  const liqAt = 100 / lev - (lev >= 50 ? 0.5 : lev >= 10 ? 0.3 : 0.1);
+  for (const t of ts) {
+    if (lev > 1 && t.worstAdvPct >= liqAt) { eq -= eq * 0.1; liq++; }
+    else { eq += eq * 0.1 * lev * t.pctRet; if (t.pctRet > 0) wins++; }
+    if (eq < 0) eq = 0;
+    peak = Math.max(peak, eq);
+    if (peak > 0) dd = Math.max(dd, (peak - eq) / peak * 100);
+    if (eq === 0) break;
+  }
+  return { eq, dd, liq, wins, n: ts.length };
+}
+
 async function main() {
-  console.log(`\nTHE SETUP — close outside NW band + RSI(ohlc4,${RSI_LEN})×MA(${RSI_MA}) cross · ${TF} · ${YEARS}y · ${STOP_PCT}% stop · TP1 mid / TP2 band`);
   const data: Record<string, Candle[]> = {};
   for (const s of SYMS) { process.stdout.write(`${s} …`); data[s] = await fetchK(s); console.log(` ${data[s].length} bars`); }
+
+  if (process.argv.includes('--sweep')) {
+    console.log(`\nSL SWEEP — ${TF} · LONG only · close-outside-band + RSI(ohlc4,${RSI_LEN})×MA · BTC+ETH+BNB · ${YEARS}y`);
+    console.log(`(worst single loss must stay < liquidation dist: 10x liq ≈ 9.5% · 20x ≈ 4.5% · 50x ≈ 1.5%)\n`);
+    const SLS: (number | null)[] = [0.5, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, null];
+    console.log(`  SL      n   WR%   PF   exp    worstLoss   $1k→3x   $1k→5x   $1k→10x   $1k→20x   maxDD@5x`);
+    for (const sl of SLS) {
+      (globalThis as any).__SL = sl; // signal to run()
+      const all: Trade[] = [];
+      for (const s of SYMS) all.push(...run(data[s], s, sl));
+      const long = all.filter((t) => t.side === 'long');
+      if (!long.length) continue;
+      const w = long.filter((t) => t.pctRet > 0).length;
+      const gW = long.filter((t) => t.rr > 0).reduce((s, t) => s + t.rr, 0);
+      const gL = -long.filter((t) => t.rr < 0).reduce((s, t) => s + t.rr, 0);
+      const exp = long.reduce((s, t) => s + t.rr, 0) / long.length;
+      const wl = Math.min(...long.map((t) => t.pctRet)) * 100;
+      const f = (lev: number) => { const r = sweepSim(long, lev); return `$${r.eq.toFixed(0)}${r.liq ? `│${r.liq}L` : ''}`; };
+      console.log(
+        `  ${(sl === null ? 'none' : sl + '%').padEnd(6)} ${String(long.length).padStart(3)}  ${(w / long.length * 100).toFixed(0).padStart(3)}  ${(gL > 0 ? gW / gL : 99).toFixed(2)}  ${exp.toFixed(2).padStart(5)}  ${wl.toFixed(1).padStart(7)}%   ${f(3).padStart(7)}  ${f(5).padStart(7)}  ${f(10).padStart(8)}  ${f(20).padStart(8)}  ${sweepSim(long, 5).dd.toFixed(0)}%`,
+      );
+    }
+    console.log(`\n  "│NL" = N liquidations. Pick the SL where worstLoss < your leverage's liq distance AND $ result is best.\n`);
+    return;
+  }
+
+  console.log(`\nTHE SETUP — close outside NW band + RSI(ohlc4,${RSI_LEN})×MA(${RSI_MA}) cross · ${TF} · ${YEARS}y · ${STOP_PCT}% stop · TP1 mid / TP2 band`);
   const all: Trade[] = [];
   for (const s of SYMS) all.push(...run(data[s], s));
   all.sort((a, b) => a.time - b.time);
