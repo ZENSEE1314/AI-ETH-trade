@@ -342,7 +342,7 @@ async function main() {
       }).join(''));
       console.log(`   ` + LEVS.map((L) => `${levSim(port, L).maxDdPct.toFixed(0)}%dd`.padStart(9)).join(''));
 
-      if (HOURS && d.name === 'long+short') {
+      if (HOURS) {
         console.log(`   by UTC entry hour (both dirs):`);
         const rows = [];
         for (let hr = 0; hr < 24; hr++) {
