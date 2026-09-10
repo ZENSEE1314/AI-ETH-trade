@@ -58,9 +58,9 @@ interface Params {
   rangeAdxMax: number;
 }
 const BASE: Params = {
-  h: 8, mult: 3, maeLen: 100, rsiPeriod: 3, rsiLo: 15, rsiHi: 85,
-  rsiTrigger: 'level', rsiMaLen: 14,
-  armBars: 6, stopPct: 2, targetMode: 'tp1tp2', scaleFrac: 0.5, tp1LockFrac: 0.75,
+  h: 8, mult: 3, maeLen: 100, rsiPeriod: 14, rsiLo: 30, rsiHi: 70,
+  rsiTrigger: 'maCross', rsiMaLen: 14,
+  armBars: 6, stopPct: 3, targetMode: 'tp1tp2', scaleFrac: 0.5, tp1LockFrac: 0.75,
   beAtR: 99, maxBars: 48,
   rangeFilter: false, rangeLookback: 20, rangeMaxSlopePct: 1.2, rangeAdxMax: 25,
 };
@@ -351,9 +351,14 @@ async function main() {
           rows.push({ hr, st: stats(g) });
         }
         rows.sort((a, b) => b.st.wr - a.st.wr);
+        const spanMonths = port.length ? (port[port.length - 1].entryTime - port[0].entryTime) / (30.44 * 86_400_000) : 1;
         for (const r of rows) {
           const mark = r.st.wr >= 45 && r.st.totR > 0 ? ' ★' : r.st.wr >= 40 && r.st.totR > 0 ? ' ·' : '';
-          console.log(`     ${String(r.hr).padStart(2)}h  n${String(r.st.n).padStart(3)}  WR ${r.st.wr.toFixed(0).padStart(3)}%  PF ${r.st.pf.toFixed(2)}  totR ${r.st.totR.toFixed(0).padStart(4)}${mark}`);
+          // $1000 @ 10% margin, 10x, only this hour's trades — $/month
+          const g = port.filter((t) => t.hour === r.hr);
+          const e = levSim(g, 10);
+          const perMo = (e.eq - 1000) / spanMonths;
+          console.log(`     ${String(r.hr).padStart(2)}h  n${String(r.st.n).padStart(3)}  WR ${r.st.wr.toFixed(0).padStart(3)}%  PF ${r.st.pf.toFixed(2)}  totR ${r.st.totR.toFixed(0).padStart(4)}   $1k@10x→ $${e.eq.toFixed(0).padStart(5)}  (${perMo >= 0 ? '+' : ''}$${perMo.toFixed(0)}/mo)${mark}`);
         }
         // out-of-sample check for the best hour: split first half / second half by time
         const best = rows.slice().sort((a, b) => b.st.totR - a.st.totR)[0];
