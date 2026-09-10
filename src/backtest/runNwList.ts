@@ -17,10 +17,10 @@ const arg = (n: string, d: string) => {
 const TF = arg('tf', '1h');
 const DAYS = Number(arg('days', '45'));
 const SYMS = arg('syms', 'ETHUSDT,BTCUSDT,BNBUSDT').split(',');
-const TF_MS: Record<string, number> = { '1h': 3_600_000, '2h': 7_200_000, '4h': 14_400_000 };
+const TF_MS: Record<string, number> = { '15m': 900_000, '30m': 1_800_000, '1h': 3_600_000, '2h': 7_200_000, '4h': 14_400_000 };
 
 // user's config: NW h8 mult3, RSI(ohlc4) len 3 crossing its SMA-14, 0.5% stop
-const H = 8, MULT = 3, MAE_LEN = 100, RSI_LEN = 3, RSI_MA = 14, STOP_PCT = 0.5, ARM = 6, MAX_BARS = 48;
+const H = 8, MULT = 3, MAE_LEN = 100, RSI_LEN = 14, RSI_MA = 14, STOP_PCT = 0.5, ARM = 6, MAX_BARS = 48;
 
 async function fetchK(sym: string): Promise<Candle[]> {
   const step = TF_MS[TF];
@@ -83,8 +83,8 @@ async function main() {
       const b = c[i];
       if (!arm) {
         // must CLOSE fully outside the band (not just wick-touch it)
-        if (b.close > up(i)) arm = { side: 'short', bar: i };
-        else if (b.close < lo(i)) arm = { side: 'long', bar: i };
+        if (b.high >= up(i)) arm = { side: 'short', bar: i };
+        else if (b.low <= lo(i)) arm = { side: 'long', bar: i };
         continue;
       }
       if (i - arm.bar > ARM) { arm = null; continue; }
