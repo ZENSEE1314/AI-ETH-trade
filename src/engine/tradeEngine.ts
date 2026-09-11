@@ -30,6 +30,7 @@ import { resample } from '../backtest/resample.js';
 import { buildContext } from '../advisor/context.js';
 import { askAdvisor } from '../advisor/advisor.js';
 import { VwapBandRsiStrategy } from '../strategy/vwapBandRsi.js';
+import { NwBandRsiWatcher } from '../strategy/nwBandRsi.js';
 import { loadTadFrames } from './marketData.js';
 import { detectTadSignal, tadTrailStop, parseTadSymbols, tadHourAllowed, TAD_TIMEFRAMES, DEFAULT_TAD } from '../strategy/tad.js';
 import { randomUUID } from 'node:crypto';
@@ -91,6 +92,9 @@ export class TradeEngine extends EventEmitter {
   private cycleBusy = false; // guards against interval ticks stacking on a slow cycle
   // One VwapBandRsiStrategy per scanned symbol (each keeps its own arm state).
   private vbrBySymbol = new Map<string, VwapBandRsiStrategy>();
+  // PAPER-ONLY: observes the NW-band+RSI rule across 15m/30m/1h/4h. Never
+  // trades real capital or touches openPositions/journal — see nwBandRsi.ts.
+  private nwWatch = new NwBandRsiWatcher();
 
   // TAD (Turtle/Atom/Duck) breakout — one config row per symbol with its
   // allowed direction(s). Empty unless TAD_SYMBOLS is set.
@@ -211,6 +215,8 @@ export class TradeEngine extends EventEmitter {
       // Hourly liquidity map — the nearest buy/sell pools to read entries from.
       this.lastLiquidity = buildLiquidityMap(snap.h1.length ? snap.h1 : snap.m15);
 
+      try { this.nwWatch.evaluate(snap); } catch (err) { logger.warn(`NW watch error: ${err}`); }
+
       await this.manageOpenPositions(snap);
       this.maybeRelearn();
 
@@ -246,6 +252,7 @@ export class TradeEngine extends EventEmitter {
 
       if (this.tadSymbols.length) parts.push(await this.scanTad());
       if (config.vbrSymbols.length) parts.push(await this.scanVwapBandRsi(config.vbrSymbols));
+      parts.push(this.nwWatch.summary());
 
       const outcome = parts.join(' | ');
 

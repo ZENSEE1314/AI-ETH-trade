@@ -29,6 +29,11 @@ const TOUCH = process.argv.includes('--touch');
 const SAMEBAR = process.argv.includes('--samebar'); // enter on the SAME bar as the band touch, no multi-bar wait
 const REBOUND = process.argv.includes('--rebound'); // no RSI wait: touch the band + this candle already closes back the right way
 const NEXTBAR = process.argv.includes('--nextbar'); // touch bar, then wait for the FOLLOWING candle to close green/red, enter there
+const FRESH = process.argv.includes('--fresh'); // only a FRESH extreme (not a repeat touch) + immediate reaction candle
+const FRESH_BARS = Number(arg('freshbars', '20'));
+const HOLDLOW = process.argv.includes('--holdlow'); // fresh extreme, THEN next candle must close green AND not make a new lower low (the edge must actually hold, not just bounce mid-crash)
+const RANGE = process.argv.includes('--range'); // skip entries while the market is trending/dumping hard — sideways only
+const ADX_MAX = Number(arg('adxmax', '25'));
 const H = 8, MULT = 3, MAE_LEN = 100, ARM = 6;
 const MAX_BARS = NOSL ? Number(arg('hold', '240')) : 48; // no-stop → hold longer ("price comes back")
 const TF_MS: Record<string, number> = { '15m': 900_000, '30m': 1_800_000, '1h': 3_600_000, '2h': 7_200_000, '4h': 14_400_000 };
@@ -50,6 +55,28 @@ async function fetchK(sym: string): Promise<Candle[]> {
   }
   return [...byTime.values()].sort((a, b) => a.time - b.time);
 }
+/** Wilder ADX — used to skip strong trending/dump moves, trade only sideways. */
+function adxSeries(c: Candle[], period = 14): number[] {
+  const n = c.length;
+  const adx = new Array(n).fill(0);
+  if (n < period * 2) return adx;
+  let tr14 = 0, plus14 = 0, minus14 = 0;
+  const dx: number[] = new Array(n).fill(0);
+  for (let i = 1; i < n; i++) {
+    const up = c[i].high - c[i - 1].high, dn = c[i - 1].low - c[i].low;
+    const plusDM = up > dn && up > 0 ? up : 0, minusDM = dn > up && dn > 0 ? dn : 0;
+    const tr = Math.max(c[i].high - c[i].low, Math.abs(c[i].high - c[i - 1].close), Math.abs(c[i].low - c[i - 1].close));
+    if (i <= period) { tr14 += tr; plus14 += plusDM; minus14 += minusDM; }
+    else { tr14 = tr14 - tr14 / period + tr; plus14 = plus14 - plus14 / period + plusDM; minus14 = minus14 - minus14 / period + minusDM; }
+    if (i >= period) { const pdi = 100 * plus14 / tr14, mdi = 100 * minus14 / tr14; dx[i] = pdi + mdi === 0 ? 0 : 100 * Math.abs(pdi - mdi) / (pdi + mdi); }
+  }
+  let acc = 0;
+  for (let i = period; i < period * 2 && i < n; i++) acc += dx[i];
+  adx[period * 2 - 1] = acc / period;
+  for (let i = period * 2; i < n; i++) adx[i] = (adx[i - 1] * (period - 1) + dx[i]) / period;
+  return adx;
+}
+
 function nwCausal(cl: number[]): number[] {
   const out = new Array(cl.length).fill(0);
   const span = Math.ceil(H * 3);
@@ -80,15 +107,50 @@ function run(c: Candle[], sym: string, slOverride?: number | null): Trade[] {
   const mae = cl.map((_, i) => { const s = Math.max(0, i - MAE_LEN + 1); let a = 0; for (let j = s; j <= i; j++) a += Math.abs(cl[j] - nw[j]); return a / (i - s + 1); });
   const up = (i: number) => nw[i] + MULT * mae[i];
   const lo = (i: number) => nw[i] - MULT * mae[i];
+  const adx = RANGE ? adxSeries(c) : [];
   const out: Trade[] = [];
   let arm: { side: 'long' | 'short'; bar: number; extreme?: number } | null = null;
 
   for (let i = MAE_LEN + 5; i < c.length; i++) {
     const b = c[i];
     let side: 'long' | 'short' | null = null;
+    // "big dump" filter: don't ARM new entries while the market is trending
+    // hard (ADX high) — only fade the band in a normal sideways market.
+    if (RANGE && !arm && adx[i] >= ADX_MAX) continue;
 
     let nextBarExtreme: number | undefined;
-    if (NEXTBAR) {
+    if (HOLDLOW) {
+      // fresh extreme arms it; the NEXT candle must close the right way AND
+      // must NOT push a new extreme itself — the low/high has to actually
+      // HOLD, not just bounce mid-crash while the move is still accelerating.
+      if (!arm) {
+        const isFreshLow = b.low <= lo(i) && b.low === Math.min(...c.slice(Math.max(0, i - FRESH_BARS), i + 1).map((x) => x.low));
+        const isFreshHigh = b.high >= up(i) && b.high === Math.max(...c.slice(Math.max(0, i - FRESH_BARS), i + 1).map((x) => x.high));
+        if (isFreshLow) arm = { side: 'long', bar: i, extreme: b.low };
+        else if (isFreshHigh) arm = { side: 'short', bar: i, extreme: b.high };
+        continue;
+      }
+      if (i === arm.bar + 1) {
+        const held = arm.side === 'long' ? b.low >= arm.extreme! : b.high <= arm.extreme!;
+        const closedRight = arm.side === 'long' ? b.close > b.open : b.close < b.open;
+        nextBarExtreme = arm.extreme;
+        const armedSide = arm.side;
+        arm = null;
+        if (!held || !closedRight) continue; // the crash kept going — skip, wait for the next real signal
+        side = armedSide;
+      } else { arm = null; continue; }
+    } else if (FRESH) {
+      // "fresh extreme" (your ✓): this bar's low/high is the deepest touch in
+      // the last FRESH_BARS bars (not a repeat poke at a level already tested)
+      // AND the candle reacts immediately (closes back the right way).
+      const touchLong = b.low <= lo(i);
+      const touchShort = b.high >= up(i);
+      const isFreshLow = touchLong && b.low === Math.min(...c.slice(Math.max(0, i - FRESH_BARS), i + 1).map((x) => x.low));
+      const isFreshHigh = touchShort && b.high === Math.max(...c.slice(Math.max(0, i - FRESH_BARS), i + 1).map((x) => x.high));
+      if (isFreshLow && b.close > b.open) side = 'long';
+      else if (isFreshHigh && b.close < b.open) side = 'short';
+      if (!side) continue;
+    } else if (NEXTBAR) {
       // touch bar arms it (tracking the extreme reached); the VERY NEXT candle
       // must close the right way (green after a low touch, red after a high
       // touch) to enter — one bar of confirmation, no RSI.
@@ -136,8 +198,8 @@ function run(c: Candle[], sym: string, slOverride?: number | null): Trade[] {
     const entry = b.close;
     // REBOUND / NEXTBAR: "SL on the edge +10%" = the band level (or the actual
     // touched extreme), pushed slPct% further out.
-    const edge = nextBarExtreme ?? (side === 'long' ? lo(i) : up(i));
-    const stop = (REBOUND || NEXTBAR)
+    const edge = nextBarExtreme ?? (side === 'long' ? Math.min(b.low, lo(i)) : Math.max(b.high, up(i)));
+    const stop = (REBOUND || NEXTBAR || FRESH || HOLDLOW)
       ? (side === 'long' ? edge * (1 - slPct / 100) : edge * (1 + slPct / 100))
       : (side === 'long' ? entry * (1 - slPct / 100) : entry * (1 + slPct / 100));
     const risk = entry * (STOP_PCT / 100); // R unit stays 0.5% for comparability even with no stop
@@ -255,7 +317,7 @@ async function main() {
       const wl = Math.min(...long.map((t) => t.pctRet)) * 100;
       const f = (lev: number) => { const r = sweepSim(long, lev); return `$${r.eq.toFixed(0)}${r.liq ? `│${r.liq}L` : ''}`; };
       console.log(
-        `  ${(sl === null ? 'none' : sl + '%').padEnd(6)} ${String(long.length).padStart(3)}  ${(w / long.length * 100).toFixed(0).padStart(3)}  ${(gL > 0 ? gW / gL : 99).toFixed(2)}  ${exp.toFixed(2).padStart(5)}  ${wl.toFixed(1).padStart(7)}%   ${f(3).padStart(7)}  ${f(5).padStart(7)}  ${f(10).padStart(8)}  ${f(20).padStart(8)}  ${sweepSim(long, 5).dd.toFixed(0)}%`,
+        `  ${(sl === null ? 'none' : sl + '%').padEnd(6)} ${String(long.length).padStart(3)}  ${(w / long.length * 100).toFixed(0).padStart(3)}  ${(gL > 0 ? gW / gL : 99).toFixed(2)}  ${exp.toFixed(2).padStart(5)}  ${wl.toFixed(1).padStart(7)}%   ${f(3).padStart(7)}  ${f(5).padStart(7)}  ${f(10).padStart(8)}  ${f(20).padStart(8)}  ${f(50).padStart(8)}  ${sweepSim(long, 5).dd.toFixed(0)}%`,
       );
     }
     console.log(`\n  "│NL" = N liquidations. Pick the SL where worstLoss < your leverage's liq distance AND $ result is best.\n`);
