@@ -17,8 +17,8 @@ import type { Candle } from '../types.js';
 
 const MIRROR = 'https://data-api.binance.vision/api/v3/klines';
 const COST = 7 / 10_000;
-const SYMS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT'];
 const arg = (n: string, d: string) => { const i = process.argv.indexOf(`--${n}`); return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : d; };
+const SYMS = (arg('syms', 'BTCUSDT,ETHUSDT,BNBUSDT')).split(',');
 const TF = arg('tf', '1h');
 const YEARS = Number(arg('years', '3'));
 const STOP_PCT = Number(arg('stop', '0.5'));
@@ -31,7 +31,7 @@ const REBOUND = process.argv.includes('--rebound'); // no RSI wait: touch the ba
 const NEXTBAR = process.argv.includes('--nextbar'); // touch bar, then wait for the FOLLOWING candle to close green/red, enter there
 const H = 8, MULT = 3, MAE_LEN = 100, ARM = 6;
 const MAX_BARS = NOSL ? Number(arg('hold', '240')) : 48; // no-stop → hold longer ("price comes back")
-const TF_MS: Record<string, number> = { '1h': 3_600_000, '2h': 7_200_000, '4h': 14_400_000 };
+const TF_MS: Record<string, number> = { '15m': 900_000, '30m': 1_800_000, '1h': 3_600_000, '2h': 7_200_000, '4h': 14_400_000 };
 
 async function fetchK(sym: string): Promise<Candle[]> {
   const step = TF_MS[TF];
