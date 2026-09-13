@@ -131,6 +131,11 @@ export interface Position {
   mode: TradingMode;
   tp1?: number; // first target — engine trails the stop to breakeven once tagged
   beMoved?: boolean; // stop already moved to breakeven
+  // TAD strategy: the engine trails the stop to the 10-bar Donchian each cycle,
+  // never past `hardStop` (the fixed 5%-from-entry cap).
+  strategy?: string; // e.g. 'tad' — which strategy opened this
+  entryTf?: string; // timeframe the entry fired on ('1d' | '4h' | '2h' | '1h')
+  hardStop?: number; // fixed max-loss price; the trail never loosens past it
 }
 
 export interface Trade {

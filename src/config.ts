@@ -34,6 +34,14 @@ export const config = {
     ),
   ),
 
+  // Symbols traded by the TAD (Turtle/Atom/Duck) breakout strategy, with a
+  // direction suffix: `:l` long-only, `:s` short-only, `:ls` both.
+  //   TAD_SYMBOLS=BTCUSDT:ls,ETHUSDT:ls,BNBUSDT:l
+  // Runs alongside the primary `strategy` and VBR; one position per symbol,
+  // capped globally by MAX_OPEN_POSITIONS. Multi-timeframe: 1d→4h→2h→1h, first
+  // fresh signal wins.
+  tadSymbols: str('TAD_SYMBOLS', ''),
+
   tradingMode: mode as TradingMode,
 
   // Risk

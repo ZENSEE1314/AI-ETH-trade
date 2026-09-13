@@ -51,6 +51,24 @@ function renderState(s) {
   renderSignals(s.recentSignals);
   renderLiquidity(s.liquidity, s.lastPrice);
   renderLearned(s.learned);
+  renderTad(s.tad, s.openPositions, s.maxOpenPositions);
+}
+
+function renderTad(tad, positions, maxOpen) {
+  const panel = $('tadPanel');
+  const el = $('tad');
+  if (!panel || !el) return;
+  if (!tad || tad.length === 0) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+  const open = (positions || []).filter((p) => p.strategy === 'tad').length;
+  el.innerHTML =
+    `<div class="reasons"><div>${open} TAD position${open === 1 ? '' : 's'} open · global cap ${maxOpen}</div></div>` +
+    tad.map((t) => {
+      const base = t.symbol.replace('USDT', '');
+      const pos = (positions || []).find((p) => p.symbol === t.symbol && p.strategy === 'tad');
+      const status = pos ? `<b class="dir ${pos.side}">${pos.side.toUpperCase()} ${pos.entryTf} @ ${fmt(pos.entry)}</b>` : '<span class="muted">scanning…</span>';
+      return `<div class="liq-row"><span class="liq-tag">${base}</span> <span class="muted">${t.dir}</span> ${status}</div>`;
+    }).join('');
 }
 
 function renderLiquidity(liq, price) {
@@ -94,21 +112,25 @@ function renderLearned(l) {
 function renderPositions(positions) {
   const el = $('positions');
   if (!positions || positions.length === 0) { el.innerHTML = '<p class="muted">No open positions.</p>'; return; }
-  el.innerHTML = positions.map((p) => `
+  el.innerHTML = positions.map((p) => {
+    const base = (p.symbol || '').replace('USDT', '') || '';
+    const tag = p.strategy === 'tad' ? `TAD ${p.entryTf || ''}` : (p.strategy || '');
+    return `
     <div class="pos">
       <div class="pos-head">
-        <span class="dir ${p.side}">${p.side.toUpperCase()}</span>
+        <span class="dir ${p.side}">${base} ${p.side.toUpperCase()}${tag ? ` · ${tag}` : ''}</span>
         <button class="btn-close" data-id="${p.id}">Close</button>
       </div>
       <div class="kv">
         <div><span>Entry</span> <b>${fmt(p.entry)}</b></div>
-        <div><span>Size</span> <b>${fmt(p.sizeContracts, 4)} ETH</b></div>
+        <div><span>Size</span> <b>${fmt(p.sizeContracts, 4)} ${base}</b></div>
         <div><span>Stop</span> <b>${fmt(p.stopLoss)}</b></div>
         <div><span>Target</span> <b>${fmt(p.takeProfit)}</b></div>
         <div><span>Liq.</span> <b>${fmt(p.liquidationPrice)}</b></div>
         <div><span>Lev</span> <b>${p.leverage}x · ${p.mode}</b></div>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
   el.querySelectorAll('.btn-close').forEach((b) =>
     b.addEventListener('click', () => fetch(`/api/close/${b.dataset.id}${qs}`, { method: 'POST', headers: authHeaders })));
 }
@@ -119,7 +141,7 @@ function renderSignals(signals) {
   el.innerHTML = signals.map((sig) => `
     <div class="sig">
       <div class="sig-head">
-        <span class="dir ${sig.side}">${sig.side.toUpperCase()} · ${sig.source}</span>
+        <span class="dir ${sig.side}">${(sig.symbol || '').replace('USDT', '')} ${sig.side.toUpperCase()} · ${sig.source}</span>
         <b>${fmt(sig.confluence, 0)}%</b>
       </div>
       <div class="kv">
