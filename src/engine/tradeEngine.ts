@@ -229,7 +229,7 @@ export class TradeEngine extends EventEmitter {
         parts.push(`holding ${config.symbol}`);
       } else if (config.strategy === 'vwapbandrsi') {
         parts.push(await this.scanVwapBandRsi([snap.symbol], snap));
-      } else if (runtime.advisorMode) {
+      } else if (config.strategy === 'advisor' && runtime.advisorMode) {
         const waitMs = ADVISOR_MIN_INTERVAL_MS - (Date.now() - this.lastAdvisorCallAt);
         parts.push(
           this.advisorBusy
