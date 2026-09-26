@@ -53,9 +53,20 @@ export const config = {
   // Let the LLM advisor decide entries/stops/targets instead of the engine.
   advisorMode: (process.env.ADVISOR_MODE ?? '').toLowerCase() === 'true',
   // Active strategy: 'advisor' (LLM), 'vwapbandrsi' (mechanical long-only band
-  // fade), or 'signal' (the built-in draw-on-liquidity engine). Overrides
-  // advisorMode when set to something other than 'advisor'.
+  // fade), 'nwflip' (NW-band breakout, backtest-validated on 1h/4h), or 'signal'
+  // (the built-in draw-on-liquidity engine). Overrides advisorMode when set to
+  // something other than 'advisor'.
   strategy: str('STRATEGY', 'advisor').toLowerCase(),
+
+  // NW-flip strategy: which timeframes to trade the breakout on ('1h,4h' — 15m
+  // loses in backtest so it is off by default) and the UTC entry-hour whitelist
+  // (the 12–16 UTC London-afternoon / NY-open window carried the edge). Empty
+  // hours = trade any hour.
+  nwFlipTfs: str('NWFLIP_TFS', '1h,4h')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
+  nwFlipHours: str('NWFLIP_HOURS', '12,13,14,15,16'),
   maxDailyLossPct: num('MAX_DAILY_LOSS_PCT', 3.0),
   maxWeeklyLossPct: num('MAX_WEEKLY_LOSS_PCT', 8.0),
   minRiskReward: num('MIN_RISK_REWARD', 2.0),
