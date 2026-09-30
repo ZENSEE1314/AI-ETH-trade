@@ -93,7 +93,8 @@ export interface LiveOrderRequest {
   qty: number;
   entry: number;
   stopLoss: number;
-  takeProfit: number;
+  takeProfit: number; // <= 0 = no exchange-side TP (trailing exit)
+  leverage?: number; // per-trade leverage; falls back to runtime.leverage
 }
 
 /** Place a live market order with attached SL/TP. Guarded by the caller. */
@@ -105,9 +106,9 @@ export async function placeLiveOrder(req: LiveOrderRequest): Promise<{ orderId: 
     tradeSide: 'OPEN',
     orderType: 'MARKET',
     qty: String(req.qty),
-    tpPrice: String(req.takeProfit),
+    ...(req.takeProfit > 0 ? { tpPrice: String(req.takeProfit) } : {}),
     slPrice: String(req.stopLoss),
-    leverage: String(runtime.leverage),
+    leverage: String(req.leverage ?? runtime.leverage),
   });
   const orderId = json?.data?.orderId ?? json?.orderId ?? 'unknown';
   logger.trade(`LIVE ORDER accepted id=${orderId}`);

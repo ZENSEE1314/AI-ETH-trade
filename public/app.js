@@ -109,12 +109,18 @@ function renderLearned(l) {
     <div class="reasons"><div>trained: ${when}</div></div>`;
 }
 
+// Trailing-exit trades (NW-flip) have no fixed target — show that, not a number.
+function fmtTarget(x) {
+  return x.trailingExit || !(x.takeProfit > 0) ? 'Trailing stop' : fmt(x.takeProfit);
+}
+
 function renderPositions(positions) {
   const el = $('positions');
   if (!positions || positions.length === 0) { el.innerHTML = '<p class="muted">No open positions.</p>'; return; }
   el.innerHTML = positions.map((p) => {
     const base = (p.symbol || '').replace('USDT', '') || '';
-    const tag = p.strategy === 'tad' ? `TAD ${p.entryTf || ''}` : (p.strategy || '');
+    const tag = p.strategy === 'tad' || p.strategy === 'nwflip'
+      ? `${p.strategy.toUpperCase()} ${p.entryTf || ''}` : (p.strategy || '');
     return `
     <div class="pos">
       <div class="pos-head">
@@ -125,7 +131,7 @@ function renderPositions(positions) {
         <div><span>Entry</span> <b>${fmt(p.entry)}</b></div>
         <div><span>Size</span> <b>${fmt(p.sizeContracts, 4)} ${base}</b></div>
         <div><span>Stop</span> <b>${fmt(p.stopLoss)}</b></div>
-        <div><span>Target</span> <b>${fmt(p.takeProfit)}</b></div>
+        <div><span>Target</span> <b>${fmtTarget(p)}</b></div>
         <div><span>Liq.</span> <b>${fmt(p.liquidationPrice)}</b></div>
         <div><span>Lev</span> <b>${p.leverage}x · ${p.mode}</b></div>
       </div>
@@ -146,10 +152,11 @@ function renderSignals(signals) {
       </div>
       <div class="kv">
         <div><span>Entry</span> <b>${fmt(sig.entry)}</b></div>
-        <div><span>R:R</span> <b>${fmt(sig.riskReward, 2)}</b></div>
+        <div><span>R:R</span> <b>${sig.trailingExit ? '—' : fmt(sig.riskReward, 2)}</b></div>
         <div><span>Stop</span> <b>${fmt(sig.stopLoss)}</b></div>
-        <div><span>Target</span> <b>${fmt(sig.takeProfit)}</b></div>
+        <div><span>Target</span> <b>${fmtTarget(sig)}</b></div>
       </div>
+      ${sig.rejectReason ? `<div class="reasons"><div>✗ Rejected: ${sig.rejectReason}</div></div>` : ''}
       ${sig.drawTarget != null ? `
       <div class="draw">
         <span class="tag">${sig.drawTimeframe || ''} DRAW</span>

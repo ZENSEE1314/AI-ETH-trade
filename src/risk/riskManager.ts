@@ -23,6 +23,17 @@ export function liquidationPrice(side: 'long' | 'short', entry: number, leverage
   return side === 'long' ? entry - move : entry + move;
 }
 
+/**
+ * Highest leverage (capped at `maxLeverage`) whose liquidation still sits
+ * beyond a stop `stopDistancePct` (fraction, e.g. 0.03) away, with a 0.5%
+ * safety buffer. Used by wide-stop strategies so they size down leverage
+ * instead of being rejected by the liquidation guard.
+ */
+export function safeLeverage(stopDistancePct: number, maxLeverage: number): number {
+  const cap = Math.floor(1 / (stopDistancePct + MAINTENANCE_MARGIN_RATE + 0.005));
+  return Math.max(1, Math.min(maxLeverage, cap));
+}
+
 export function assessRisk(signal: Signal, ctx: RiskContext): RiskDecision {
   const leverage = signal.leverageOverride ?? runtime.leverage;
   const reject = (reason: string): RiskDecision => ({
@@ -58,7 +69,7 @@ export function assessRisk(signal: Signal, ctx: RiskContext): RiskDecision {
   if (signal.confluence < runtime.minConfluence) {
     return reject(`Confluence ${signal.confluence} < required ${runtime.minConfluence}.`);
   }
-  if (signal.riskReward < runtime.minRiskReward) {
+  if (!signal.trailingExit && signal.riskReward < runtime.minRiskReward) {
     return reject(`R:R ${signal.riskReward} < required ${runtime.minRiskReward}.`);
   }
 
@@ -118,7 +129,7 @@ export function assessRisk(signal: Signal, ctx: RiskContext): RiskDecision {
 
   return {
     approved: true,
-    reason: `Approved: ${positionSizePct > 0 ? `margin ${marginUsdt.toFixed(2)} (${positionSizePct}%)` : `risk ${riskUsdt.toFixed(2)}`} USDT, size ${positionSizeContracts.toFixed(4)}, R:R ${signal.riskReward}.`,
+    reason: `Approved: ${positionSizePct > 0 ? `margin ${marginUsdt.toFixed(2)} (${positionSizePct}%)` : `risk ${riskUsdt.toFixed(2)}`} USDT, size ${positionSizeContracts.toFixed(4)}, ${leverage}x, ${signal.trailingExit ? 'trailing exit' : `R:R ${signal.riskReward}`}.`,
     positionSizeContracts: round(positionSizeContracts, 4),
     notionalUsdt: round(notionalUsdt, 2),
     marginUsdt: round(marginUsdt, 2),

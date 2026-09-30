@@ -2,7 +2,7 @@
 // exposes state for the dashboard. Holds all in-memory runtime state.
 
 import { EventEmitter } from 'node:events';
-import type { Candle, Position, Signal, Trade } from '../types.js';
+import type { Candle, Position, RiskDecision, Signal, Trade } from '../types.js';
 import { config } from '../config.js';
 import { runtime, canTradeLive } from '../runtime.js';
 import { logger } from '../logger.js';
@@ -21,7 +21,7 @@ const MIN_RELEARN_BUFFER = 2000; // 1m candles needed before a relearn is truste
 const KLINE_BUFFER_CAP = 60_000; // ~41 days of 1m held for online learning
 const LIVE_FEED_MIN = 250; // 1m bars from the live feed before it drives the engine
 const LIVE_FEED_CAP = 60_000; // bound the live 1m tail we keep in memory
-import { assessRisk, type RiskContext } from '../risk/riskManager.js';
+import { assessRisk, safeLeverage, type RiskContext } from '../risk/riskManager.js';
 import { openPaperPosition, evaluatePosition, closePosition } from '../exchange/paperBroker.js';
 import { placeLiveOrder } from '../exchange/bitunix.js';
 import { loadSnapshot, snapshotFromM1, lastPrice } from './marketData.js';
@@ -515,9 +515,13 @@ export class TradeEngine extends EventEmitter {
         continue;
       }
       const entry = sig.entry;
-      // Park the target far away so the risk gate passes and the trail is the exit.
-      const takeProfit = sig.side === 'long' ? entry * 4 : entry * 0.01;
+      // No fixed target — the trailing stop is the exit. Risk-based sizing
+      // (RISK_PER_TRADE_PCT of equity per stop-out) with leverage cut so the
+      // liquidation sits beyond the stop: at the default 50x a >1.5% stop is
+      // liquidated first, and 10% margin x 50x put 5x equity at risk, so the
+      // risk gate used to reject virtually every NW-flip breakout.
       const risk = Math.abs(entry - sig.stopLoss);
+      const leverage = safeLeverage(risk / entry, runtime.leverage);
       const signal: Signal = {
         id: randomUUID(),
         time: Date.now(),
@@ -525,21 +529,22 @@ export class TradeEngine extends EventEmitter {
         side: sig.side,
         entry: round(entry, 2),
         stopLoss: round(sig.stopLoss, 2),
-        takeProfit: round(takeProfit, 2),
-        riskReward: risk > 0 ? round(Math.abs(takeProfit - entry) / risk, 2) : 99,
+        takeProfit: 0,
+        riskReward: 0,
+        trailingExit: true,
         confluence: Math.max(75, runtime.minConfluence),
         source: 'engine',
         reasons: [
           `NW-FLIP ${tf} ${sig.side.toUpperCase()} — close ${round(entry, 2)} broke the ${sig.side === 'long' ? 'upper' : 'lower'} band @ ${round(sig.band, 2)}`,
-          `stop: trail(prior 10-bar extreme) @ ${round(sig.stopLoss, 2)}, hard 3% @ ${round(sig.hardStop, 2)}`,
+          `stop: trail(prior 10-bar extreme) @ ${round(sig.stopLoss, 2)} (${((risk / entry) * 100).toFixed(2)}%), hard 3% @ ${round(sig.hardStop, 2)}`,
+          `exit: trailing stop only (no fixed target) · ${leverage}x, risk ${runtime.riskPerTradePct}% of equity`,
         ],
-        marginPctOverride: runtime.positionSizePct > 0 ? runtime.positionSizePct : 10,
-        leverageOverride: runtime.leverage,
+        marginPctOverride: 0,
+        leverageOverride: leverage,
       };
       this.nwFlipLastBar.set(tf, sig.barTime);
-      const before = this.openPositions.length;
-      this.processSignal(signal);
-      if (this.openPositions.length > before) {
+      const decision = this.processSignal(signal);
+      if (decision.approved) {
         const p = this.openPositions.at(-1)!;
         p.strategy = 'nwflip';
         p.entryTf = tf;
@@ -547,7 +552,7 @@ export class TradeEngine extends EventEmitter {
         this.savePositions();
         notes.push(`${tf}:${sig.side} @ ${round(entry, 2)}`);
       } else {
-        notes.push(`${tf}:${sig.side} rejected`);
+        notes.push(`${tf}:${sig.side} rejected (${decision.reason})`);
       }
     }
     const out = `NWFLIP ${notes.join(' ')}`;
@@ -666,7 +671,7 @@ export class TradeEngine extends EventEmitter {
   }
 
   /** Run a signal through risk and, if approved, execute it. */
-  processSignal(signal: Signal): void {
+  processSignal(signal: Signal): RiskDecision {
     this.recentSignals.unshift(signal);
     this.recentSignals = this.recentSignals.slice(0, 20);
     this.saveSignals();
@@ -675,8 +680,10 @@ export class TradeEngine extends EventEmitter {
     const decision = assessRisk(signal, this.riskContext());
     logger.info(`Signal ${signal.side} conf=${signal.confluence} rr=${signal.riskReward} -> ${decision.reason}`);
     if (!decision.approved) {
+      signal.rejectReason = decision.reason;
+      this.saveSignals();
       this.emit('rejected', { signal, decision });
-      return;
+      return decision;
     }
 
     const position = openPaperPosition(signal, decision);
@@ -689,6 +696,7 @@ export class TradeEngine extends EventEmitter {
         entry: signal.entry,
         stopLoss: signal.stopLoss,
         takeProfit: signal.takeProfit,
+        leverage: decision.leverage,
       })
         .then(() => {
           position.mode = 'live';
@@ -700,6 +708,7 @@ export class TradeEngine extends EventEmitter {
     this.savePositions();
     logger.trade(`Opened ${position.side} ${position.symbol} @ ${position.entry} (${position.mode}) size=${position.sizeContracts}`);
     this.emit('opened', position);
+    return decision;
   }
 
   /** Manually flatten a position at the current price (dashboard control). */
