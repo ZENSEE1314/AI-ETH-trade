@@ -104,6 +104,10 @@ export interface Signal {
   // Fall back to runtime settings when unset.
   marginPctOverride?: number; // commit this % of equity as margin for this trade
   leverageOverride?: number; // leverage for this trade
+  // No fixed target: the exit is a trailing stop (takeProfit is 0 and the
+  // R:R gate is skipped, since R:R is undefined without a target).
+  trailingExit?: boolean;
+  rejectReason?: string; // set when the risk manager refused the signal (dashboard)
 }
 
 export interface RiskDecision {
@@ -136,6 +140,7 @@ export interface Position {
   strategy?: string; // e.g. 'tad' — which strategy opened this
   entryTf?: string; // timeframe the entry fired on ('1d' | '4h' | '2h' | '1h')
   hardStop?: number; // fixed max-loss price; the trail never loosens past it
+  trailingExit?: boolean; // no fixed target — only the (trailing) stop closes it
 }
 
 export interface Trade {

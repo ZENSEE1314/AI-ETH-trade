@@ -18,6 +18,7 @@ export function openPaperPosition(signal: Signal, risk: RiskDecision): Position 
     openedAt: Date.now(),
     mode: 'paper',
     tp1: signal.nearTarget,
+    trailingExit: signal.trailingExit,
   };
 }
 
@@ -28,7 +29,9 @@ export function openPaperPosition(signal: Signal, risk: RiskDecision): Position 
  */
 export function evaluatePosition(pos: Position, candle: Candle): Trade | null {
   const hitStop = pos.side === 'long' ? candle.low <= pos.stopLoss : candle.high >= pos.stopLoss;
-  const hitTarget = pos.side === 'long' ? candle.high >= pos.takeProfit : candle.low <= pos.takeProfit;
+  // takeProfit <= 0 means "no fixed target" (trailing-stop exit only).
+  const hasTarget = !pos.trailingExit && pos.takeProfit > 0;
+  const hitTarget = hasTarget && (pos.side === 'long' ? candle.high >= pos.takeProfit : candle.low <= pos.takeProfit);
   const hitLiq = pos.side === 'long' ? candle.low <= pos.liquidationPrice : candle.high >= pos.liquidationPrice;
 
   let exit: number | null = null;
