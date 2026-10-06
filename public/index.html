@@ -49,6 +49,32 @@
     </nav>
 
     <section class="tabpane active" id="tab-desk">
+      <div class="botbar">
+        <div><b class="botname">AI-ETH BOT</b> <span class="sep">/</span> <span class="muted-s">TRADING MODE</span> <span class="mode-dot" id="obMode">● PAPER</span></div>
+        <div class="botstats"><span>UPTIME <b id="obUptime">—</b></span><span>CYCLE <b id="obCycle">—</b></span><span>PID <b id="obPid">—</b></span></div>
+      </div>
+      <div class="ov-cards">
+        <div class="ov-card"><span>Current balance</span><b id="ovBal">—</b><small id="ovBalSub">—</small></div>
+        <div class="ov-card accent"><span>Total P&amp;L</span><b id="ovPnl">—</b><small id="ovPnlSub">—</small></div>
+        <div class="ov-card"><span>Open exposure</span><b id="ovExp">—</b><small id="ovExpSub">—</small></div>
+        <div class="ov-card"><span>Win rate</span><b id="ovWin">—</b><small id="ovWinSub">—</small></div>
+      </div>
+      <div class="ov-row">
+        <div class="dpanel">
+          <h3>// Balance history <span class="muted-s" id="balRange"></span></h3>
+          <canvas id="balCanvas" class="chart" aria-label="Balance history"></canvas>
+          <div class="tip hidden" id="balTip"></div>
+        </div>
+        <div class="dpanel">
+          <h3>// Activity log <span class="muted-s" id="actCount"></span></h3>
+          <div id="actLog" class="actlog"><p class="muted-s">Waiting for engine activity…</p></div>
+        </div>
+      </div>
+      <div class="dpanel agents-wrap">
+        <h3>// Agent comms <span class="muted-s">— each strategy and guard, with its latest status</span></h3>
+        <div id="agents" class="agents"></div>
+      </div>
+
       <div class="ticker">
         <div class="tick"><span>ETH</span><b id="tkEth">—</b></div>
         <div class="tick"><span>BTC set</span><b id="tkBtcSet">—</b></div>

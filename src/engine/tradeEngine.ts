@@ -64,6 +64,11 @@ export interface EngineState {
     exit: string;
     trainedAt: number | null;
   };
+  strategy: string; // configured STRATEGY
+  cycles: number; // analysis cycles completed since start
+  startedAt: number; // process start, for uptime
+  pid: number;
+  lastScan: string; // last cycle's outcome line, " | "-separated per strategy
   updatedAt: number;
 }
 
@@ -108,6 +113,9 @@ export class TradeEngine extends EventEmitter {
   private nwFlipLastBar = new Map<string, number>();
   private lastNwFlipNote = '';
   private lastCandles: Candle[] = [];
+  private cycleCount = 0;
+  private readonly startedAt = Date.now();
+  private lastOutcome = '';
 
   /** True when an open position already exists on this symbol. */
   private hasPositionFor(symbol: string): boolean {
@@ -267,6 +275,8 @@ export class TradeEngine extends EventEmitter {
       parts.push(this.nwWatch.summary());
 
       const outcome = parts.join(' | ');
+      this.cycleCount++;
+      this.lastOutcome = outcome;
 
       // Per-cycle heartbeat so the log shows the agent working every check.
       const s15 = readStructure(snap.m15.length ? snap.m15 : snap.h1, 2);
@@ -767,6 +777,11 @@ export class TradeEngine extends EventEmitter {
         exit: this.learned.partial ? 'partial' : this.learned.beAtR ? `be@${this.learned.beAtR}R` : 'tp',
         trainedAt: this.learned.meta?.trainedAt ?? null,
       },
+      strategy: config.strategy,
+      cycles: this.cycleCount,
+      startedAt: this.startedAt,
+      pid: process.pid,
+      lastScan: this.lastOutcome,
       updatedAt: Date.now(),
     };
   }
