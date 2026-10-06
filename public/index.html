@@ -40,14 +40,80 @@
     </section>
 
     <nav class="tabs">
-      <button class="tab active" data-tab="live">Live</button>
+      <button class="tab active" data-tab="desk">Desk</button>
+      <button class="tab" data-tab="live">Live</button>
       <button class="tab" data-tab="journal">Journal</button>
       <button class="tab" data-tab="curriculum">Playbook</button>
       <button class="tab" data-tab="logs">Logs</button>
       <button class="tab" data-tab="settings">Settings</button>
     </nav>
 
-    <section class="tabpane active" id="tab-live">
+    <section class="tabpane active" id="tab-desk">
+      <div class="ticker">
+        <div class="tick"><span>ETH</span><b id="tkEth">—</b></div>
+        <div class="tick"><span>BTC set</span><b id="tkBtcSet">—</b></div>
+        <div class="tick"><span>ETH set</span><b id="tkEthSet">—</b></div>
+        <div class="tick"><span>Poly P&amp;L</span><b id="tkPoly">—</b></div>
+        <div class="tick feed"><span class="live-dot">LIVE FEED</span><div class="feed-track"><div id="feedText"></div></div></div>
+        <div class="tick clock"><b id="tkClock">--:--:--</b><span>UTC</span></div>
+      </div>
+
+      <div class="desk">
+        <div class="dpanel wallet">
+          <h3>Wallet <span id="wMode" class="chip">paper</span></h3>
+          <div class="hero" id="wHero">—</div>
+          <div class="sub" id="wSub">all-time · perps + polymarket</div>
+          <div class="mini-kv">
+            <div><span>Perp P&amp;L</span><b id="wPerp">—</b></div>
+            <div><span>Poly P&amp;L</span><b id="wPoly">—</b></div>
+            <div><span>Fills</span><b id="wFills">—</b></div>
+            <div><span>Win rate</span><b id="wWin">—</b></div>
+            <div><span>Sets bought</span><b id="wSets">—</b></div>
+            <div><span>Poly cash</span><b id="wCash">—</b></div>
+          </div>
+          <div class="spark-label">Equity curve (closed perp trades)</div>
+          <canvas id="equityCanvas" class="spark" aria-label="Equity curve"></canvas>
+        </div>
+
+        <div class="dpanel chartp">
+          <h3><span id="chartSym">ETH</span> · 15m <span class="muted-s" id="chartLast"></span></h3>
+          <canvas id="priceCanvas" class="chart" aria-label="Price chart, 15 minute candles"></canvas>
+          <div class="tip hidden" id="priceTip"></div>
+        </div>
+
+        <div class="dpanel polyp">
+          <h3>Polymarket sets <span class="chip warn">PAPER</span> <span class="muted-s" id="polyStatus"></span></h3>
+          <div id="polyQuotes" class="quotes"><p class="muted-s">Waiting for Polymarket…</p></div>
+          <div class="sub-h">Open sets</div>
+          <div id="polyOpen" class="open-sets"><p class="muted-s">None.</p></div>
+        </div>
+
+        <div class="dpanel shell">
+          <h3>Neural shell <span class="muted-s">— engine inputs, animated (visual only, not the decision model)</span></h3>
+          <canvas id="shellCanvas" class="shell-canvas" aria-hidden="true"></canvas>
+        </div>
+
+        <div class="dpanel gridp">
+          <h3>Resolution grid <span class="muted-s">— settled sets, ¢ per set</span></h3>
+          <div id="resGrid" class="res-grid"><p class="muted-s">No settled sets yet.</p></div>
+        </div>
+
+        <div class="dpanel edgep">
+          <h3>Edge history <span class="muted-s">— UP ask + DOWN ask vs $1</span></h3>
+          <div class="legend" id="edgeLegend"></div>
+          <canvas id="edgeCanvas" class="chart" aria-label="Set cost over time per asset"></canvas>
+          <div class="tip hidden" id="edgeTip"></div>
+        </div>
+
+        <div class="dpanel feedp">
+          <h3>Signal feed</h3>
+          <div id="deskSignals" class="dsig"><p class="muted-s">Waiting for setups…</p></div>
+        </div>
+      </div>
+      <p class="disclaimer">Polymarket side is a paper simulation: it assumes both legs fill at the best ask and uses an assumed fee (POLY_FEE_PCT). Live, one leg can fill without the other.</p>
+    </section>
+
+    <section class="tabpane" id="tab-live">
       <div class="grid2">
         <div class="panel">
           <h2>Liquidity Map <span class="muted" style="font-size:12px;font-weight:400">— nearest pools</span></h2>
@@ -168,5 +234,6 @@
   </footer>
 
   <script src="/app.js"></script>
+  <script src="/desk.js"></script>
 </body>
 </html>

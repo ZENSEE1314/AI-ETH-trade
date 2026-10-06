@@ -4,6 +4,7 @@ const $ = (id) => document.getElementById(id);
 const token = new URLSearchParams(location.search).get('token');
 const authHeaders = token ? { 'x-dashboard-token': token } : {};
 const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+window.deskQs = qs; window.deskHeaders = authHeaders;
 
 const fmt = (n, dp = 2) =>
   n === null || n === undefined || Number.isNaN(n) ? '—' : Number(n).toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp });
@@ -52,6 +53,7 @@ function renderState(s) {
   renderLiquidity(s.liquidity, s.lastPrice);
   renderLearned(s.learned);
   renderTad(s.tad, s.openPositions, s.maxOpenPositions);
+  window.desk?.state(s);
 }
 
 function renderTad(tad, positions, maxOpen) {
@@ -170,6 +172,7 @@ function renderSignals(signals) {
 
 async function loadJournal() {
   const rows = await fetch(`/api/journal${qs}`, { headers: authHeaders }).then((r) => r.json());
+  window.desk?.journal(rows);
   const tb = document.querySelector('#journalTable tbody');
   if (!rows.length) { tb.innerHTML = '<tr><td colspan="8" class="muted">No trades yet.</td></tr>'; return; }
   tb.innerHTML = rows.map((t) => `
@@ -210,6 +213,7 @@ function connect() {
   es.addEventListener('open', () => { $('connBadge').textContent = 'live'; $('connBadge').className = 'badge ok'; });
   es.addEventListener('update', (e) => { renderState(JSON.parse(e.data)); loadJournal(); loadLogs(); });
   es.addEventListener('trade', () => loadJournal());
+  es.addEventListener('poly', (e) => window.desk?.poly(JSON.parse(e.data)));
   es.onerror = () => { $('connBadge').textContent = 'reconnecting…'; $('connBadge').className = 'badge off'; };
 }
 
