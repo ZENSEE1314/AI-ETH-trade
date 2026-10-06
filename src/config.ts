@@ -67,6 +67,30 @@ export const config = {
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean),
   nwFlipHours: str('NWFLIP_HOURS', '12,13,14,15,16'),
+
+  // Polymarket complete-set bot (PAPER ONLY — it never places real orders).
+  // Scans the short "BTC/ETH up or down" markets and, when buying one share of
+  // UP plus one of DOWN costs less than $1 after fees, simulates buying the set
+  // and collecting the guaranteed $1 at resolution.
+  polyEnabled: str('POLY_ENABLED', 'true').toLowerCase() === 'true',
+  polyAssets: str('POLY_ASSETS', 'btc,eth')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
+  polyWindowMin: num('POLY_WINDOW_MIN', 5),
+  // Market slug pattern; {asset}, {w} (window minutes) and {start} (window
+  // start, unix seconds) are filled in. Change it if Polymarket renames them.
+  polySlugTemplate: str('POLY_SLUG_TEMPLATE', '{asset}-updown-{w}m-{start}'),
+  polyScanMs: num('POLY_SCAN_MS', 5000),
+  polyBankrollUsdc: num('POLY_BANKROLL_USDC', 1000),
+  polyMaxUsdcPerWindow: num('POLY_MAX_USDC_PER_WINDOW', 100),
+  // Minimum edge per set, in dollars, AFTER fees (0.01 = 1 cent).
+  polyMinEdge: num('POLY_MIN_EDGE', 0.01),
+  // Assumed taker fee as a % of notional. Polymarket's fee schedule for these
+  // markets changes — set this to the current published rate.
+  polyFeePct: num('POLY_FEE_PCT', 1.0),
+  // Don't open new sets this close to the window's end.
+  polyMinSecondsLeft: num('POLY_MIN_SECONDS_LEFT', 20),
   maxDailyLossPct: num('MAX_DAILY_LOSS_PCT', 3.0),
   maxWeeklyLossPct: num('MAX_WEEKLY_LOSS_PCT', 8.0),
   minRiskReward: num('MIN_RISK_REWARD', 2.0),

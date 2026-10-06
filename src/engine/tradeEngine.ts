@@ -107,6 +107,7 @@ export class TradeEngine extends EventEmitter {
   private nwFlipHours = parseHours(config.nwFlipHours);
   private nwFlipLastBar = new Map<string, number>();
   private lastNwFlipNote = '';
+  private lastCandles: Candle[] = [];
 
   /** True when an open position already exists on this symbol. */
   private hasPositionFor(symbol: string): boolean {
@@ -218,6 +219,7 @@ export class TradeEngine extends EventEmitter {
           ? snapshotFromM1(config.symbol, this.liveM1)
           : await loadSnapshot(config.symbol);
       this.lastPx = lastPrice(snap);
+      this.lastCandles = (snap.m15.length ? snap.m15 : snap.h1).slice(-120);
       this.lastBias = buildBias(snap.h4.length ? snap.h4 : snap.h1).direction;
       this.accumulateKlines(snap.m1);
       // Hourly liquidity map — the nearest buy/sell pools to read entries from.
@@ -767,6 +769,11 @@ export class TradeEngine extends EventEmitter {
       },
       updatedAt: Date.now(),
     };
+  }
+
+  /** Recent 15m candles for the dashboard price chart. */
+  getCandles(): Candle[] {
+    return this.lastCandles;
   }
 
   getJournal(): Trade[] {
