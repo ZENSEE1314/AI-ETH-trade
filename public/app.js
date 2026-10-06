@@ -203,6 +203,7 @@ async function loadCurriculum() {
 
 async function loadLogs() {
   const logs = await fetch(`/api/logs${qs}`, { headers: authHeaders }).then((r) => r.json());
+  window.desk?.logs(logs);
   $('logs').innerHTML = logs.map((l) =>
     `<div class="logline ${l.level}"><span class="t">${new Date(l.time).toLocaleTimeString()}</span> ${l.msg}</div>`).join('');
 }

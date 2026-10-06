@@ -64,15 +64,32 @@ export interface EngineState {
     exit: string;
     trainedAt: number | null;
   };
+  strategy: string; // configured STRATEGY
+  cycles: number; // analysis cycles completed since start
+  startedAt: number; // process start, for uptime
+  pid: number;
+  lastScan: string; // last cycle's outcome line, " | "-separated per strategy
   updatedAt: number;
+}
+
+/**
+ * Older TAD / NW-flip trades were stored with a placeholder target 4x away
+ * (or 1% of entry for shorts) and no trailing flag, so the dashboard showed
+ * ~$10k ETH targets. Flag them as trailing exits; the paper broker then never
+ * closes them on that fake target, and the dashboard shows "Trailing stop".
+ */
+function migrateTrailing<T extends { entry: number; takeProfit: number; trailingExit?: boolean }>(x: T): T {
+  if (x.trailingExit || !(x.entry > 0) || !(x.takeProfit > 0)) return x;
+  const ratio = x.takeProfit / x.entry;
+  return ratio >= 3.5 || ratio <= 0.02 ? { ...x, trailingExit: true } : x;
 }
 
 export class TradeEngine extends EventEmitter {
   private journal = new Journal();
   // Persisted to the volume so a redeploy doesn't lose an open trade or wipe
   // the recent-signals feed (advisor reasoning included) the dashboard shows.
-  private openPositions: Position[] = readJson<Position[]>('positions', []);
-  private recentSignals: Signal[] = readJson<Signal[]>('signals', []);
+  private openPositions: Position[] = readJson<Position[]>('positions', []).map(migrateTrailing);
+  private recentSignals: Signal[] = readJson<Signal[]>('signals', []).map(migrateTrailing);
   private lastPx = 0;
   private lastBias = 'n/a';
   private running = false;
@@ -108,6 +125,9 @@ export class TradeEngine extends EventEmitter {
   private nwFlipLastBar = new Map<string, number>();
   private lastNwFlipNote = '';
   private lastCandles: Candle[] = [];
+  private cycleCount = 0;
+  private readonly startedAt = Date.now();
+  private lastOutcome = '';
 
   /** True when an open position already exists on this symbol. */
   private hasPositionFor(symbol: string): boolean {
@@ -267,6 +287,8 @@ export class TradeEngine extends EventEmitter {
       parts.push(this.nwWatch.summary());
 
       const outcome = parts.join(' | ');
+      this.cycleCount++;
+      this.lastOutcome = outcome;
 
       // Per-cycle heartbeat so the log shows the agent working every check.
       const s15 = readStructure(snap.m15.length ? snap.m15 : snap.h1, 2);
@@ -436,10 +458,7 @@ export class TradeEngine extends EventEmitter {
           continue;
         }
         const entry = sig.entry;
-        // No fixed target — the trailing Donchian stop is the exit. Park the
-        // takeProfit far away so the risk gate passes and it never caps a run.
-        const takeProfit = sig.side === 'long' ? entry * 4 : entry * 0.01;
-        const risk = Math.abs(entry - sig.stopLoss);
+        // No fixed target — the trailing Donchian stop is the exit.
         const signal: Signal = {
           id: randomUUID(),
           time: Date.now(),
@@ -447,13 +466,15 @@ export class TradeEngine extends EventEmitter {
           side: sig.side,
           entry: round(entry, 2),
           stopLoss: round(sig.stopLoss, 2),
-          takeProfit: round(takeProfit, 2),
-          riskReward: risk > 0 ? round(Math.abs(takeProfit - entry) / risk, 2) : 99,
+          takeProfit: 0,
+          riskReward: 0,
+          trailingExit: true,
           confluence: Math.max(75, runtime.minConfluence),
           source: 'engine',
           reasons: [
             `TAD ${tf} ${sig.side.toUpperCase()} breakout — Turtle(20) + BB(20,1.0) + EMA50 + volume`,
             `stop: Donchian-10 trail @ ${round(sig.donTrail, 2)}, hard 5% @ ${round(sig.hardStop, 2)}`,
+            'exit: trailing stop only (no fixed target)',
           ],
           marginPctOverride: DEFAULT_TAD.marginPct,
           leverageOverride: DEFAULT_TAD.leverage,
@@ -767,6 +788,11 @@ export class TradeEngine extends EventEmitter {
         exit: this.learned.partial ? 'partial' : this.learned.beAtR ? `be@${this.learned.beAtR}R` : 'tp',
         trainedAt: this.learned.meta?.trainedAt ?? null,
       },
+      strategy: config.strategy,
+      cycles: this.cycleCount,
+      startedAt: this.startedAt,
+      pid: process.pid,
+      lastScan: this.lastOutcome,
       updatedAt: Date.now(),
     };
   }

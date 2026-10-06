@@ -294,23 +294,144 @@
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   (function loop() { drawShell(); if (!reduceMotion) requestAnimationFrame(loop); })();
 
+  // --- Bot overview: status bar, KPI cards, balance history, activity, agents
+  let logs = [];
+  const dur = (ms) => { const m = Math.floor(ms / 60000); const d = Math.floor(m / 1440); const h = Math.floor((m % 1440) / 60);
+    return d ? `${d}d ${h}h` : h ? `${h}h ${m % 60}m` : `${m}m`; };
+
+  function renderOverview() {
+    if (!engine) return;
+    const live = engine.mode === 'live' && engine.liveEnabled;
+    $('obMode').textContent = live ? '● LIVE' : '● PAPER'; $('obMode').className = 'mode-dot' + (live ? ' live' : '');
+    $('obUptime').textContent = engine.startedAt ? dur(Date.now() - engine.startedAt) : '—';
+    $('obCycle').textContent = engine.cycles != null ? '#' + engine.cycles : '—';
+    $('obPid').textContent = engine.pid ?? '—';
+
+    const polyPnl = poly ? poly.realizedPnl : 0;
+    const perp = engine.stats?.netPnlUsdt ?? 0;
+    const start = (engine.startEquity || 0) + (poly ? poly.bankroll : 0);
+    const bal = (engine.equity || 0) + (poly ? poly.cash + poly.open.reduce((s, p) => s + p.sets * p.costPerSet, 0) : 0);
+    const total = perp + polyPnl;
+    $('ovBal').textContent = money(bal);
+    $('ovBalSub').textContent = `initial ${money(start)} · perps ${money(engine.equity)}${poly ? ' + poly ' + money(bal - engine.equity) : ''}`;
+    $('ovPnl').textContent = sMoney(total); $('ovPnl').className = cls(total);
+    $('ovPnlSub').textContent = start ? `${total >= 0 ? '+' : ''}${((total / start) * 100).toFixed(1)}% · perps ${sMoney(perp)} · poly ${sMoney(polyPnl)}` : '—';
+    const pos = engine.openPositions || [];
+    const notional = pos.reduce((s, p) => s + p.entry * p.sizeContracts, 0);
+    $('ovExp').textContent = money(notional);
+    $('ovExpSub').textContent = `${pos.length} perp position${pos.length === 1 ? '' : 's'} · ${poly?.open?.length || 0} open sets`;
+    const st = engine.stats || {};
+    $('ovWin').textContent = (st.winRatePct ?? 0).toFixed(1) + '%';
+    $('ovWinSub').textContent = `${st.wins ?? 0}W / ${st.losses ?? 0}L · PF ${st.profitFactor === null || st.profitFactor === Infinity ? '∞' : Number(st.profitFactor || 0).toFixed(2)}`;
+    drawBalance(); renderAgents();
+  }
+
+  // Balance over time: start + cumulative realized P&L from perps and Polymarket sets.
+  let balGeom = null;
+  function drawBalance() {
+    const c = $('balCanvas'); const { ctx, w, h } = sized(c);
+    ctx.clearRect(0, 0, w, h);
+    const start = (engine?.startEquity || 0) + (poly ? poly.bankroll : 0);
+    const ev = [
+      ...journal.map((t) => ({ t: t.closedAt, d: t.pnlUsdt })),
+      ...(poly?.recent || []).map((p) => ({ t: p.settledAt, d: p.pnl || 0 })),
+    ].filter((e) => e.t).sort((a, b) => a.t - b.t);
+    if (ev.length < 1) { axisText(ctx, 'No realized P&L yet', w / 2, h / 2, 'center'); balGeom = null; $('balRange').textContent = ''; return; }
+    let v = start; const pts = [{ t: ev[0].t - 1, v }, ...ev.map((e) => ({ t: e.t, v: (v += e.d) }))];
+    const t0 = pts[0].t; const t1 = pts[pts.length - 1].t;
+    const lo = Math.min(...pts.map((p) => p.v)); const hi = Math.max(...pts.map((p) => p.v)); const pad = (hi - lo) * 0.08 || 1;
+    const right = 8; const plotW = w - right;
+    const X = (t) => ((t - t0) / (t1 - t0 || 1)) * plotW; const Y = (x) => 10 + (1 - (x - lo + pad) / (hi - lo + 2 * pad)) * (h - 24);
+    for (const g of [lo, hi]) { ctx.strokeStyle = css('--grid'); ctx.beginPath(); ctx.moveTo(0, Y(g)); ctx.lineTo(plotW, Y(g)); ctx.stroke(); axisText(ctx, money(g), 2, Y(g) - 7); }
+    const up = pts[pts.length - 1].v >= start; const col = up ? css('--green') : css('--red');
+    ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+    ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(X(p.t), Y(p.v)) : ctx.moveTo(X(p.t), Y(p.v)))); ctx.stroke();
+    const last = pts[pts.length - 1];
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(X(last.t), Y(last.v), 4, 0, Math.PI * 2); ctx.fill();
+    ctx.font = '700 13px ui-monospace, monospace'; ctx.textAlign = 'right'; ctx.textBaseline = 'bottom'; ctx.fillText(money(last.v), X(last.t) - 8, Y(last.v) - 6);
+    $('balRange').textContent = `${new Date(t0).toISOString().slice(5, 10)} → now · ${ev.length} closes`;
+    balGeom = { pts, X, plotW };
+  }
+  $('balCanvas').addEventListener('mousemove', (e) => {
+    if (!balGeom) return;
+    const r = e.currentTarget.getBoundingClientRect(); const x = e.clientX - r.left; const tip = $('balTip');
+    const p = balGeom.pts.reduce((b, q) => (Math.abs(balGeom.X(q.t) - x) < Math.abs(balGeom.X(b.t) - x) ? q : b));
+    tip.innerHTML = `${new Date(p.t).toISOString().slice(0, 16).replace('T', ' ')} UTC<br>${money(p.v)}`;
+    tip.style.left = Math.min(x + 18, r.width - 150) + 'px'; tip.style.top = '40px'; tip.classList.remove('hidden');
+  });
+  $('balCanvas').addEventListener('mouseleave', () => $('balTip').classList.add('hidden'));
+
+  // Activity log: engine log lines tagged by what they are.
+  function tagOf(l) {
+    const m = l.msg;
+    if (l.level === 'error') return 'ERR';
+    if (/^SCAN /.test(m)) return 'SCAN';
+    if (/Opened |POLY paper BUY|LIVE ORDER submitting/.test(m)) return 'EXEC';
+    if (/Closed |settled|Manually closed|LIVE ORDER accepted/.test(m)) return 'FILL';
+    if (/^Signal .* -> (?!Approved)/.test(m) || /KILL SWITCH|liquidat|rejected/i.test(m)) return 'RISK';
+    if (l.level === 'warn') return 'WARN';
+    if (l.level === 'trade') return 'FILL';
+    return 'INFO';
+  }
+  function renderActivity() {
+    const rows = logs.slice(0, 120);
+    $('actCount').textContent = rows.length ? `${rows.filter((l) => tagOf(l) === 'FILL').length} fills shown` : '';
+    $('actLog').innerHTML = rows.length ? rows.map((l) => {
+      const tag = tagOf(l);
+      const msg = tag === 'SCAN' ? l.msg.replace(/^SCAN /, '') : l.msg;
+      return `<div title="${esc(l.msg)}"><span class="tag ${tag}">[${tag}]</span> ${esc(new Date(l.time).toISOString().slice(11, 19))} ${esc(msg)}</div>`;
+    }).join('') : '<p class="muted-s">Waiting for engine activity…</p>';
+  }
+
+  // Agent comms: one card per strategy / guard, status read from the last scan.
+  const AGENT_COLORS = ['#3987e5', '#199e70', '#c98500', '#d95926', '#d55181', '#9085e9', '#e66767'];
+  function renderAgents() {
+    if (!engine) return;
+    const parts = (engine.lastScan || '').split(' | ');
+    const part = (prefix) => parts.find((p) => p.startsWith(prefix)) || '';
+    const strat = engine.strategy;
+    const lastRej = (engine.recentSignals || []).find((x) => x.rejectReason);
+    const recentOpen = (engine.openPositions || []).slice(-1)[0];
+    const agents = [
+      { name: 'NW-FLIP', on: strat === 'nwflip', msg: part('NWFLIP').replace(/^NWFLIP /, '') || 'not the active strategy', hot: recentOpen?.strategy === 'nwflip' },
+      { name: 'SNIPER', on: strat === 'signal', msg: strat === 'signal' ? (parts[0] || '') : 'draw-on-liquidity engine (STRATEGY=signal)' },
+      { name: 'ADVISOR', on: strat === 'advisor', msg: strat === 'advisor' ? (parts.find((p) => p.startsWith('advisor')) || '') : 'LLM advisor (STRATEGY=advisor)' },
+      { name: 'TAD', on: !!part('TAD'), msg: part('TAD').replace(/^TAD /, '') || 'off (TAD_SYMBOLS empty)', hot: recentOpen?.strategy === 'tad' },
+      { name: 'NW-WATCH', on: !!part('NW '), msg: part('NW ').replace(/^NW /, '') || 'paper watcher idle' },
+      { name: 'POLY', on: !!poly?.enabled, msg: !poly ? 'loading…' : !poly.enabled ? 'off (POLY_ENABLED=false)' : poly.lastError ? 'error: ' + poly.lastError
+        : poly.quotes.map((q) => `${q.asset} ${q.cost.toFixed(3)}`).join(' · ') || 'waiting for quotes', hot: (poly?.open?.length || 0) > 0 },
+      { name: 'RISK', on: true, msg: engine.killSwitch?.daily || engine.killSwitch?.weekly ? 'KILL SWITCH: ' + engine.killSwitch.reason
+        : lastRej ? 'last block: ' + lastRej.rejectReason : 'all clear', hot: engine.killSwitch?.daily || engine.killSwitch?.weekly },
+    ];
+    $('agents').innerHTML = agents.map((a, i) => `
+      <div class="agent ${a.on ? '' : 'off'} ${a.hot ? 'hot' : ''}" style="--c:${AGENT_COLORS[i % AGENT_COLORS.length]}">
+        <div class="ah"><span>${String(i + 1).padStart(2, '0')}</span><span class="st ${a.on ? 'on' : 'idle'}">${a.on ? 'ACTIVE' : 'IDLE'}</span></div>
+        <div class="face"><i></i><i></i></div>
+        <div class="an">${esc(a.name)}</div>
+        <div class="am" title="${esc(a.msg)}">${esc(a.msg)}</div>
+      </div>`).join('');
+  }
+  setInterval(() => { if (engine) $('obUptime').textContent = dur(Date.now() - engine.startedAt); }, 30000);
+
   // --- Data plumbing --------------------------------------------------------
   async function loadCandles() {
     try { candles = await fetch(`/api/candles${qs}`, { headers }).then((r) => r.json()); drawPrice(); renderTicker(); } catch { /* ignore */ }
   }
   async function loadPoly() {
-    try { poly = await fetch(`/api/polymarket${qs}`, { headers }).then((r) => r.json()); renderPoly(); renderTicker(); renderWallet(); renderFeed(); } catch { /* ignore */ }
+    try { poly = await fetch(`/api/polymarket${qs}`, { headers }).then((r) => r.json()); renderPoly(); renderTicker(); renderWallet(); renderFeed(); renderOverview(); } catch { /* ignore */ }
   }
-  window.addEventListener('resize', () => { drawPrice(); drawEdge(); drawEquity(); });
-  document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => setTimeout(() => { drawPrice(); drawEdge(); drawEquity(); }, 0)));
+  window.addEventListener('resize', () => { drawPrice(); drawEdge(); drawEquity(); drawBalance(); });
+  document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => setTimeout(() => { drawPrice(); drawEdge(); drawEquity(); drawBalance(); }, 0)));
 
   window.desk = {
-    state(s) { engine = s; renderTicker(); renderWallet(); renderSignals(); renderFeed(); loadCandles(); },
-    poly(p) { poly = p; renderPoly(); renderTicker(); renderWallet(); renderFeed(); },
-    journal(rows) { journal = rows || []; renderWallet(); },
+    state(s) { engine = s; renderTicker(); renderWallet(); renderSignals(); renderFeed(); renderOverview(); loadCandles(); },
+    poly(p) { poly = p; renderPoly(); renderTicker(); renderWallet(); renderFeed(); renderOverview(); },
+    journal(rows) { journal = rows || []; renderWallet(); drawBalance(); },
+    logs(rows) { logs = rows || []; renderActivity(); },
   };
   // app.js may have fetched state/journal before this script loaded; fetch our own copy.
   fetch(`/api/state${qs}`, { headers }).then((r) => r.json()).then((s) => s && window.desk.state(s)).catch(() => {});
   fetch(`/api/journal${qs}`, { headers }).then((r) => r.json()).then((j) => window.desk.journal(j)).catch(() => {});
+  fetch(`/api/logs${qs}`, { headers }).then((r) => r.json()).then((l) => window.desk.logs(l)).catch(() => {});
   loadPoly();
 })();
