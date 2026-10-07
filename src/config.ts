@@ -110,6 +110,13 @@ export const config = {
   bitunixApiKey: str('BITUNIX_API_KEY', ''),
   bitunixApiSecret: str('BITUNIX_API_SECRET', ''),
 
+  // Health monitor: opens a GitHub issue (label bot-health) when a check has
+  // failed for HEALTH_ALERT_MIN minutes, so a scheduled Claude session can fix it.
+  // Token needs Issues read/write on the repo only. Blank = dashboard-only.
+  githubToken: str('GITHUB_TOKEN', ''),
+  githubRepo: str('GITHUB_REPO', ''),
+  healthAlertMin: num('HEALTH_ALERT_MIN', 10),
+
   // Auth & persistence
   // Signing/encryption key for sessions and stored secrets. MUST be set (and
   // stable) in production, or sessions reset and stored API secrets become
