@@ -13,6 +13,7 @@ import { engine } from './engine/tradeEngine.js';
 import { parseTradingViewAlert, parseTradingViewCandles, WebhookError } from './webhooks/tradingview.js';
 import { CURRICULUM, PHILOSOPHY } from './knowledge/curriculum.js';
 import { polyBot } from './polymarket/bot.js';
+import { healthMonitor } from './monitor/health.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const publicDir = join(__dirname, '..', 'public');
@@ -65,6 +66,7 @@ app.get('/api/state', requireAuth, (_req, res) => res.json(engine.state()));
 app.get('/api/journal', requireAuth, (_req, res) => res.json(engine.getJournal()));
 app.get('/api/candles', requireAuth, (_req, res) => res.json(engine.getCandles()));
 app.get('/api/polymarket', requireAuth, (_req, res) => res.json(polyBot.state()));
+app.get('/api/health', requireAuth, (_req, res) => res.json(healthMonitor.state()));
 app.get('/api/logs', requireAuth, (_req, res) => res.json(logger.recent()));
 app.get('/api/curriculum', requireAuth, (_req, res) =>
   res.json({ philosophy: PHILOSOPHY, modules: CURRICULUM }),
@@ -164,4 +166,5 @@ app.listen(config.port, () => {
   }
   engine.start();
   polyBot.start();
+  healthMonitor.start();
 });

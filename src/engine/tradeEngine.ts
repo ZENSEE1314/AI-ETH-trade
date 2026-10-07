@@ -69,6 +69,7 @@ export interface EngineState {
   startedAt: number; // process start, for uptime
   pid: number;
   lastScan: string; // last cycle's outcome line, " | "-separated per strategy
+  lastCycleAt: number; // when the last cycle finished OK (0 = none yet)
   updatedAt: number;
 }
 
@@ -128,6 +129,7 @@ export class TradeEngine extends EventEmitter {
   private cycleCount = 0;
   private readonly startedAt = Date.now();
   private lastOutcome = '';
+  private lastCycleAt = 0;
 
   /** True when an open position already exists on this symbol. */
   private hasPositionFor(symbol: string): boolean {
@@ -289,6 +291,7 @@ export class TradeEngine extends EventEmitter {
       const outcome = parts.join(' | ');
       this.cycleCount++;
       this.lastOutcome = outcome;
+      this.lastCycleAt = Date.now();
 
       // Per-cycle heartbeat so the log shows the agent working every check.
       const s15 = readStructure(snap.m15.length ? snap.m15 : snap.h1, 2);
@@ -429,7 +432,8 @@ export class TradeEngine extends EventEmitter {
    * TAD (Turtle/Atom/Duck) breakout scan. Independent position per symbol; for
    * each symbol with no open position, the timeframes are checked in priority
    * order (1d → 4h → 2h → 1h) and the first fresh signal is taken. Fixed sizing:
-   * 10% of equity as margin at 10x (from DEFAULT_TAD).
+   * Risk-based sizing: a stop-out loses RISK_PER_TRADE_PCT of equity, with
+   * leverage capped (≤ DEFAULT_TAD.leverage) so liquidation sits beyond the stop.
    */
   private async scanTad(): Promise<string> {
     const notes: string[] = [];
@@ -459,6 +463,10 @@ export class TradeEngine extends EventEmitter {
         }
         const entry = sig.entry;
         // No fixed target — the trailing Donchian stop is the exit.
+        // Sizing: the old fixed 10% margin x 10x put 1x equity on a stop up
+        // to 5% away — more than the 3% daily cap — so the risk gate
+        // rejected most TAD signals. Size by risk instead, like NW-flip.
+        const leverage = safeLeverage(Math.abs(entry - sig.stopLoss) / entry, DEFAULT_TAD.leverage);
         const signal: Signal = {
           id: randomUUID(),
           time: Date.now(),
@@ -474,10 +482,10 @@ export class TradeEngine extends EventEmitter {
           reasons: [
             `TAD ${tf} ${sig.side.toUpperCase()} breakout — Turtle(20) + BB(20,1.0) + EMA50 + volume`,
             `stop: Donchian-10 trail @ ${round(sig.donTrail, 2)}, hard 5% @ ${round(sig.hardStop, 2)}`,
-            'exit: trailing stop only (no fixed target)',
+            `exit: trailing stop only (no fixed target) · ${leverage}x, risk ${runtime.riskPerTradePct}% of equity`,
           ],
-          marginPctOverride: DEFAULT_TAD.marginPct,
-          leverageOverride: DEFAULT_TAD.leverage,
+          marginPctOverride: 0,
+          leverageOverride: leverage,
         };
         const before = this.openPositions.length;
         this.processSignal(signal);
@@ -793,6 +801,7 @@ export class TradeEngine extends EventEmitter {
       startedAt: this.startedAt,
       pid: process.pid,
       lastScan: this.lastOutcome,
+      lastCycleAt: this.lastCycleAt,
       updatedAt: Date.now(),
     };
   }
