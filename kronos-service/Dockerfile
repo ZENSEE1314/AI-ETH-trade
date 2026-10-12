@@ -23,4 +23,6 @@ ENV KRONOS_DEVICE=cpu
 # Cache HF weights on the writable layer so a restart doesn't re-download.
 ENV HF_HOME=/app/.hf
 EXPOSE 8000
-CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Bind IPv6 (::) so the bot can reach it over Railway's private network, which is
+# IPv6-only; this also accepts IPv4 on Linux dual-stack.
+CMD ["sh", "-c", "uvicorn app:app --host :: --port ${PORT:-8000}"]
