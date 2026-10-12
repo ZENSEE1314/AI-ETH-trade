@@ -34,6 +34,7 @@ import { NwBandRsiWatcher } from '../strategy/nwBandRsi.js';
 import { loadTadFrames } from './marketData.js';
 import { detectTadSignal, tadTrailStop, parseTadSymbols, tadHourAllowed, TAD_TIMEFRAMES, DEFAULT_TAD } from '../strategy/tad.js';
 import { detectNwFlip, trailExtreme, nwHourAllowed, parseHours, DEFAULT_NWFLIP } from '../strategy/nwFlip.js';
+import { kronosEnabled, kronosAgrees } from '../strategy/kronosFilter.js';
 import { randomUUID } from 'node:crypto';
 
 const ADVISOR_MIN_INTERVAL_MS = Number(process.env.ADVISOR_MIN_INTERVAL_MS ?? 15 * 60_000);
@@ -537,6 +538,19 @@ export class TradeEngine extends EventEmitter {
         notes.push(`${tf}:${sig.side} off-hours`);
         continue;
       }
+      // Kronos forecast filter: only take the breakout if the model agrees on
+      // direction. Fails open (allows) so a down/slow model service never stalls
+      // the bot. No-op unless KRONOS_URL is set.
+      let kNote = '';
+      if (kronosEnabled()) {
+        const k = await kronosAgrees(tf, closed, sig.side);
+        kNote = k.note;
+        if (!k.ok) {
+          this.nwFlipLastBar.set(tf, sig.barTime); // consume this bar — forecast won't change within it
+          notes.push(`${tf}:${sig.side} ${k.note}`);
+          continue;
+        }
+      }
       const entry = sig.entry;
       // No fixed target — the trailing stop is the exit. Risk-based sizing
       // (RISK_PER_TRADE_PCT of equity per stop-out) with leverage cut so the
@@ -561,6 +575,7 @@ export class TradeEngine extends EventEmitter {
           `NW-FLIP ${tf} ${sig.side.toUpperCase()} — close ${round(entry, 2)} broke the ${sig.side === 'long' ? 'upper' : 'lower'} band @ ${round(sig.band, 2)}`,
           `stop: trail(prior 10-bar extreme) @ ${round(sig.stopLoss, 2)} (${((risk / entry) * 100).toFixed(2)}%), hard 3% @ ${round(sig.hardStop, 2)}`,
           `exit: trailing stop only (no fixed target) · ${leverage}x, risk ${runtime.riskPerTradePct}% of equity`,
+          ...(kNote ? [`confirm: ${kNote}`] : []),
         ],
         marginPctOverride: 0,
         leverageOverride: leverage,
