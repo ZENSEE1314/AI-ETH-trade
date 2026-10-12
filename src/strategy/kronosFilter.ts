@@ -20,6 +20,16 @@ export function kronosEnabled(): boolean {
   return !!KRONOS_URL;
 }
 
+/**
+ * Blocking vs shadow. KRONOS_MODE=filter actually vetoes a breakout the model
+ * disagrees with; any other value (default 'shadow') only logs the verdict and
+ * lets the trade through, so we gather paired breakout/forecast/outcome data and
+ * can prove the filter helps before it starts gating real trades.
+ */
+export function kronosBlocking(): boolean {
+  return (process.env.KRONOS_MODE ?? 'shadow').toLowerCase() === 'filter';
+}
+
 export interface KronosVerdict {
   ok: boolean; // true = agrees (or failed open); false = forecast disagrees
   note: string; // compact status for the scan log

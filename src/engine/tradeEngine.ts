@@ -34,7 +34,7 @@ import { NwBandRsiWatcher } from '../strategy/nwBandRsi.js';
 import { loadTadFrames } from './marketData.js';
 import { detectTadSignal, tadTrailStop, parseTadSymbols, tadHourAllowed, TAD_TIMEFRAMES, DEFAULT_TAD } from '../strategy/tad.js';
 import { detectNwFlip, trailExtreme, nwHourAllowed, parseHours, DEFAULT_NWFLIP } from '../strategy/nwFlip.js';
-import { kronosEnabled, kronosAgrees } from '../strategy/kronosFilter.js';
+import { kronosEnabled, kronosBlocking, kronosAgrees } from '../strategy/kronosFilter.js';
 import { randomUUID } from 'node:crypto';
 
 const ADVISOR_MIN_INTERVAL_MS = Number(process.env.ADVISOR_MIN_INTERVAL_MS ?? 15 * 60_000);
@@ -544,10 +544,10 @@ export class TradeEngine extends EventEmitter {
       let kNote = '';
       if (kronosEnabled()) {
         const k = await kronosAgrees(tf, closed, sig.side);
-        kNote = k.note;
-        if (!k.ok) {
+        kNote = kronosBlocking() ? k.note : `${k.note}[shadow]`;
+        if (!k.ok && kronosBlocking()) {
           this.nwFlipLastBar.set(tf, sig.barTime); // consume this bar — forecast won't change within it
-          notes.push(`${tf}:${sig.side} ${k.note}`);
+          notes.push(`${tf}:${sig.side} ${k.note} BLOCKED`);
           continue;
         }
       }
