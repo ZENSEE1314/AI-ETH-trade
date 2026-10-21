@@ -11,7 +11,7 @@
   const cls = (n) => (n > 0 ? 'pos-pnl' : n < 0 ? 'neg-pnl' : '');
   const esc = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
-  let engine = null; let poly = null; let journal = []; let candles = [];
+  let engine = null; let poly = null; let health = null; let journal = []; let candles = [];
   const qs = window.deskQs || ''; const headers = window.deskHeaders || {};
 
   // --- Canvas helpers -------------------------------------------------------
@@ -384,7 +384,7 @@
   }
 
   // Agent comms: one card per strategy / guard, status read from the last scan.
-  const AGENT_COLORS = ['#3987e5', '#199e70', '#c98500', '#d95926', '#d55181', '#9085e9', '#e66767'];
+  const AGENT_COLORS = ['#3987e5', '#199e70', '#c98500', '#d95926', '#d55181', '#9085e9', '#e66767', '#4fb3bf'];
   function renderAgents() {
     if (!engine) return;
     const parts = (engine.lastScan || '').split(' | ');
@@ -402,6 +402,7 @@
         : poly.quotes.map((q) => `${q.asset} ${q.cost.toFixed(3)}`).join(' · ') || 'waiting for quotes', hot: (poly?.open?.length || 0) > 0 },
       { name: 'RISK', on: true, msg: engine.killSwitch?.daily || engine.killSwitch?.weekly ? 'KILL SWITCH: ' + engine.killSwitch.reason
         : lastRej ? 'last block: ' + lastRej.rejectReason : 'all clear', hot: engine.killSwitch?.daily || engine.killSwitch?.weekly },
+      healthAgent(),
     ];
     $('agents').innerHTML = agents.map((a, i) => `
       <div class="agent ${a.on ? '' : 'off'} ${a.hot ? 'hot' : ''}" style="--c:${AGENT_COLORS[i % AGENT_COLORS.length]}">
@@ -411,6 +412,22 @@
         <div class="am" title="${esc(a.msg)}">${esc(a.msg)}</div>
       </div>`).join('');
   }
+  // HEALTH: the self-monitor (src/monitor/health.ts). Shows the worst check;
+  // failures that last open a GitHub issue for Claude to fix.
+  function healthAgent() {
+    if (!health) return { name: 'HEALTH', on: true, msg: 'loading…' };
+    const bad = health.checks.filter((c) => c.level !== 'ok').sort((a, b) => (a.level === 'fail' ? -1 : 1) - (b.level === 'fail' ? -1 : 1));
+    const issues = Object.values(health.github.openIssues || {});
+    const gh = health.github.enabled ? (issues.length ? ` · issue ${issues.map((n) => '#' + n).join(' ')}` : ' · GitHub alerts on') : ' · alerts off (no GITHUB_TOKEN)';
+    const msg = bad.length ? bad.map((c) => `${c.level.toUpperCase()} ${c.name}: ${c.message}`).join(' · ') + gh
+      : `all ${health.checks.length} checks OK${gh}`;
+    return { name: 'HEALTH', on: true, msg, hot: health.overall === 'fail' };
+  }
+  async function loadHealth() {
+    try { health = await fetch(`/api/health${qs}`, { headers }).then((r) => r.json()); renderAgents(); } catch { /* ignore */ }
+  }
+  setInterval(loadHealth, 60000);
+
   setInterval(() => { if (engine) $('obUptime').textContent = dur(Date.now() - engine.startedAt); }, 30000);
 
   // --- Data plumbing --------------------------------------------------------
@@ -434,4 +451,5 @@
   fetch(`/api/journal${qs}`, { headers }).then((r) => r.json()).then((j) => window.desk.journal(j)).catch(() => {});
   fetch(`/api/logs${qs}`, { headers }).then((r) => r.json()).then((l) => window.desk.logs(l)).catch(() => {});
   loadPoly();
+  loadHealth();
 })();
