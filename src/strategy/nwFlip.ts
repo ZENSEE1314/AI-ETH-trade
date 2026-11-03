@@ -114,3 +114,16 @@ export function nwHourAllowed(barTimeMs: number, allowedHours: number[]): boolea
   if (!allowedHours.length) return true;
   return allowedHours.includes(new Date(barTimeMs).getUTCHours());
 }
+
+/**
+ * True when the bar falls in the month-turn blackout: the first `days` or last
+ * `days` calendar days of the month (UTC). Month-end/month-start carry rebalance
+ * and roll noise the user wants to sit out. days<=0 disables the blackout.
+ */
+export function isMonthEdge(barTimeMs: number, days: number): boolean {
+  if (days <= 0) return false;
+  const d = new Date(barTimeMs);
+  const dom = d.getUTCDate();
+  const daysInMonth = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+  return dom <= days || dom > daysInMonth - days;
+}

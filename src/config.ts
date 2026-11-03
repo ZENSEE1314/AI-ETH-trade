@@ -67,6 +67,9 @@ export const config = {
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean),
   nwFlipHours: str('NWFLIP_HOURS', '12,13,14,15,16'),
+  // Month-turn blackout: skip the first/last N calendar days (UTC) of each month
+  // (month-end/start chop). 0 = off.
+  nwFlipMonthEdgeDays: num('NWFLIP_SKIP_MONTH_EDGE_DAYS', 0),
 
   // Polymarket complete-set bot (PAPER ONLY — it never places real orders).
   // Scans the short "BTC/ETH up or down" markets and, when buying one share of

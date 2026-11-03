@@ -33,7 +33,7 @@ import { VwapBandRsiStrategy } from '../strategy/vwapBandRsi.js';
 import { NwBandRsiWatcher } from '../strategy/nwBandRsi.js';
 import { loadTadFrames } from './marketData.js';
 import { detectTadSignal, tadTrailStop, parseTadSymbols, tadHourAllowed, TAD_TIMEFRAMES, DEFAULT_TAD } from '../strategy/tad.js';
-import { detectNwFlip, trailExtreme, nwHourAllowed, parseHours, DEFAULT_NWFLIP } from '../strategy/nwFlip.js';
+import { detectNwFlip, trailExtreme, nwHourAllowed, isMonthEdge, parseHours, DEFAULT_NWFLIP } from '../strategy/nwFlip.js';
 import { kronosEnabled, kronosBlocking, kronosAgrees } from '../strategy/kronosFilter.js';
 import { randomUUID } from 'node:crypto';
 
@@ -536,6 +536,11 @@ export class TradeEngine extends EventEmitter {
       if (!nwHourAllowed(sig.barTime, this.nwFlipHours)) {
         this.nwFlipLastBar.set(tf, sig.barTime); // consume it so we don't re-check every cycle
         notes.push(`${tf}:${sig.side} off-hours`);
+        continue;
+      }
+      if (isMonthEdge(sig.barTime, config.nwFlipMonthEdgeDays)) {
+        this.nwFlipLastBar.set(tf, sig.barTime);
+        notes.push(`${tf}:${sig.side} month-edge`);
         continue;
       }
       // Kronos forecast filter: only take the breakout if the model agrees on
