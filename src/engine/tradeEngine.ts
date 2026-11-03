@@ -499,9 +499,9 @@ export class TradeEngine extends EventEmitter {
     return `TAD ${notes.join(' ')}`;
   }
 
-  /** True when an NW-flip position is already open on this timeframe. */
-  private hasNwPositionFor(tf: string): boolean {
-    return this.openPositions.some((p) => p.strategy === 'nwflip' && p.entryTf === tf && p.symbol === config.symbol);
+  /** True when an NW-flip position is already open on this symbol + timeframe. */
+  private hasNwPositionFor(symbol: string, tf: string): boolean {
+    return this.openPositions.some((p) => p.strategy === 'nwflip' && p.entryTf === tf && p.symbol === symbol);
   }
 
   /** Closed bars for a timeframe from the current snapshot (in-progress bar dropped). */
@@ -511,91 +511,103 @@ export class TradeEngine extends EventEmitter {
   }
 
   /**
-   * NW-flip breakout scan on the configured timeframes (default 1h+4h). One
-   * position per timeframe, entered only on a NEW closed breakout bar whose UTC
-   * hour is whitelisted. No fixed target — the trailing stop (prior 10-bar
-   * extreme, capped by the 3% hard stop) is the exit, so trend legs run.
+   * NW-flip breakout scan across the configured symbols (default BTC+ETH) and
+   * timeframes (default 1h+4h). One position per symbol+timeframe, entered only
+   * on a NEW closed breakout bar whose UTC hour is whitelisted. No fixed target
+   * — the trailing stop (prior 10-bar extreme, capped by the 3% hard stop) is
+   * the exit, so trend legs run. The primary cycle snapshot is reused for the
+   * primary symbol; the rest are fetched per symbol (same as TAD/VBR).
    */
-  private async scanNwFlip(snap: MarketSnapshot): Promise<string> {
+  private async scanNwFlip(primary: MarketSnapshot): Promise<string> {
     const notes: string[] = [];
-    for (const tf of config.nwFlipTfs) {
-      if (this.hasNwPositionFor(tf)) {
-        notes.push(`${tf}:held`);
+    for (const symbol of config.nwFlipSymbols) {
+      let snap: MarketSnapshot;
+      try {
+        snap = symbol === primary.symbol ? primary : await loadSnapshot(symbol);
+      } catch {
+        notes.push(`${symbol}:feed-err`);
         continue;
       }
-      const closed = this.nwBars(tf, snap);
-      const sig = detectNwFlip(closed, DEFAULT_NWFLIP);
-      if (!sig) {
-        notes.push(`${tf}:-`);
-        continue;
-      }
-      if (this.nwFlipLastBar.get(tf) === sig.barTime) {
-        notes.push(`${tf}:done`); // already acted on this closed bar
-        continue;
-      }
-      if (!nwHourAllowed(sig.barTime, this.nwFlipHours)) {
-        this.nwFlipLastBar.set(tf, sig.barTime); // consume it so we don't re-check every cycle
-        notes.push(`${tf}:${sig.side} off-hours`);
-        continue;
-      }
-      if (isMonthEdge(sig.barTime, config.nwFlipMonthEdgeDays)) {
-        this.nwFlipLastBar.set(tf, sig.barTime);
-        notes.push(`${tf}:${sig.side} month-edge`);
-        continue;
-      }
-      // Kronos forecast filter: only take the breakout if the model agrees on
-      // direction. Fails open (allows) so a down/slow model service never stalls
-      // the bot. No-op unless KRONOS_URL is set.
-      let kNote = '';
-      if (kronosEnabled()) {
-        const k = await kronosAgrees(tf, closed, sig.side);
-        kNote = kronosBlocking() ? k.note : `${k.note}[shadow]`;
-        if (!k.ok && kronosBlocking()) {
-          this.nwFlipLastBar.set(tf, sig.barTime); // consume this bar — forecast won't change within it
-          notes.push(`${tf}:${sig.side} ${k.note} BLOCKED`);
+      for (const tf of config.nwFlipTfs) {
+        const key = `${symbol}:${tf}`;
+        if (this.hasNwPositionFor(symbol, tf)) {
+          notes.push(`${symbol}/${tf}:held`);
           continue;
         }
-      }
-      const entry = sig.entry;
-      // No fixed target — the trailing stop is the exit. Risk-based sizing
-      // (RISK_PER_TRADE_PCT of equity per stop-out) with leverage cut so the
-      // liquidation sits beyond the stop: at the default 50x a >1.5% stop is
-      // liquidated first, and 10% margin x 50x put 5x equity at risk, so the
-      // risk gate used to reject virtually every NW-flip breakout.
-      const risk = Math.abs(entry - sig.stopLoss);
-      const leverage = safeLeverage(risk / entry, runtime.leverage);
-      const signal: Signal = {
-        id: randomUUID(),
-        time: Date.now(),
-        symbol: config.symbol,
-        side: sig.side,
-        entry: round(entry, 2),
-        stopLoss: round(sig.stopLoss, 2),
-        takeProfit: 0,
-        riskReward: 0,
-        trailingExit: true,
-        confluence: Math.max(75, runtime.minConfluence),
-        source: 'engine',
-        reasons: [
-          `NW-FLIP ${tf} ${sig.side.toUpperCase()} — close ${round(entry, 2)} broke the ${sig.side === 'long' ? 'upper' : 'lower'} band @ ${round(sig.band, 2)}`,
-          `stop: trail(prior 10-bar extreme) @ ${round(sig.stopLoss, 2)} (${((risk / entry) * 100).toFixed(2)}%), hard 3% @ ${round(sig.hardStop, 2)}`,
-          `exit: trailing stop only (no fixed target) · ${leverage}x, risk ${runtime.riskPerTradePct}% of equity`,
-          ...(kNote ? [`confirm: ${kNote}`] : []),
-        ],
-        marginPctOverride: 0,
-        leverageOverride: leverage,
-      };
-      this.nwFlipLastBar.set(tf, sig.barTime);
-      const decision = this.processSignal(signal);
-      if (decision.approved) {
-        const p = this.openPositions.at(-1)!;
-        p.strategy = 'nwflip';
-        p.entryTf = tf;
-        p.hardStop = round(sig.hardStop, 2);
-        this.savePositions();
-        notes.push(`${tf}:${sig.side} @ ${round(entry, 2)}`);
-      } else {
-        notes.push(`${tf}:${sig.side} rejected (${decision.reason})`);
+        const closed = this.nwBars(tf, snap);
+        const sig = detectNwFlip(closed, DEFAULT_NWFLIP);
+        if (!sig) {
+          notes.push(`${symbol}/${tf}:-`);
+          continue;
+        }
+        if (this.nwFlipLastBar.get(key) === sig.barTime) {
+          notes.push(`${symbol}/${tf}:done`); // already acted on this closed bar
+          continue;
+        }
+        if (!nwHourAllowed(sig.barTime, this.nwFlipHours)) {
+          this.nwFlipLastBar.set(key, sig.barTime); // consume it so we don't re-check every cycle
+          notes.push(`${symbol}/${tf}:${sig.side} off-hours`);
+          continue;
+        }
+        if (isMonthEdge(sig.barTime, config.nwFlipMonthEdgeDays)) {
+          this.nwFlipLastBar.set(key, sig.barTime);
+          notes.push(`${symbol}/${tf}:${sig.side} month-edge`);
+          continue;
+        }
+        // Kronos forecast filter: only take the breakout if the model agrees on
+        // direction. Fails open (allows) so a down/slow model service never
+        // stalls the bot. No-op unless KRONOS_URL is set.
+        let kNote = '';
+        if (kronosEnabled()) {
+          const k = await kronosAgrees(tf, closed, sig.side);
+          kNote = kronosBlocking() ? k.note : `${k.note}[shadow]`;
+          if (!k.ok && kronosBlocking()) {
+            this.nwFlipLastBar.set(key, sig.barTime); // consume this bar — forecast won't change within it
+            notes.push(`${symbol}/${tf}:${sig.side} ${k.note} BLOCKED`);
+            continue;
+          }
+        }
+        const entry = sig.entry;
+        // No fixed target — the trailing stop is the exit. Risk-based sizing
+        // (RISK_PER_TRADE_PCT of equity per stop-out) with leverage cut so the
+        // liquidation sits beyond the stop: at the default 50x a >1.5% stop is
+        // liquidated first, and 10% margin x 50x put 5x equity at risk, so the
+        // risk gate used to reject virtually every NW-flip breakout.
+        const risk = Math.abs(entry - sig.stopLoss);
+        const leverage = safeLeverage(risk / entry, runtime.leverage);
+        const signal: Signal = {
+          id: randomUUID(),
+          time: Date.now(),
+          symbol,
+          side: sig.side,
+          entry: round(entry, 2),
+          stopLoss: round(sig.stopLoss, 2),
+          takeProfit: 0,
+          riskReward: 0,
+          trailingExit: true,
+          confluence: Math.max(75, runtime.minConfluence),
+          source: 'engine',
+          reasons: [
+            `NW-FLIP ${symbol} ${tf} ${sig.side.toUpperCase()} — close ${round(entry, 2)} broke the ${sig.side === 'long' ? 'upper' : 'lower'} band @ ${round(sig.band, 2)}`,
+            `stop: trail(prior 10-bar extreme) @ ${round(sig.stopLoss, 2)} (${((risk / entry) * 100).toFixed(2)}%), hard 3% @ ${round(sig.hardStop, 2)}`,
+            `exit: trailing stop only (no fixed target) · ${leverage}x, risk ${runtime.riskPerTradePct}% of equity`,
+            ...(kNote ? [`confirm: ${kNote}`] : []),
+          ],
+          marginPctOverride: 0,
+          leverageOverride: leverage,
+        };
+        this.nwFlipLastBar.set(key, sig.barTime);
+        const decision = this.processSignal(signal);
+        if (decision.approved) {
+          const p = this.openPositions.at(-1)!;
+          p.strategy = 'nwflip';
+          p.entryTf = tf;
+          p.hardStop = round(sig.hardStop, 2);
+          this.savePositions();
+          notes.push(`${symbol}/${tf}:${sig.side} @ ${round(entry, 2)}`);
+        } else {
+          notes.push(`${symbol}/${tf}:${sig.side} rejected (${decision.reason})`);
+        }
       }
     }
     const out = `NWFLIP ${notes.join(' ')}`;
@@ -667,26 +679,28 @@ export class TradeEngine extends EventEmitter {
     if (this.openPositions.length === 0) return;
     const still: Position[] = [];
     for (const pos of this.openPositions) {
-      // The position may be on a symbol other than the cycle's primary.
-      let candle: Candle | undefined;
+      // The position may be on a symbol other than the cycle's primary — load
+      // that symbol's snapshot so both the stop-check candle and the NW-flip
+      // trail use the right market.
+      let posSnap: MarketSnapshot | undefined;
       if (pos.symbol === snap.symbol) {
-        candle = (snap.m1.length ? snap.m1 : snap.m15).at(-1);
+        posSnap = snap;
       } else {
         try {
-          const s = await loadSnapshot(pos.symbol);
-          candle = (s.m1.length ? s.m1 : s.m15).at(-1);
+          posSnap = await loadSnapshot(pos.symbol);
         } catch {
-          candle = undefined;
+          posSnap = undefined;
         }
       }
-      if (!candle) {
+      const candle = posSnap ? (posSnap.m1.length ? posSnap.m1 : posSnap.m15).at(-1) : undefined;
+      if (!candle || !posSnap) {
         still.push(pos);
         continue;
       }
       // TAD: trail the stop to the 10-bar Donchian on the entry timeframe.
       await this.trailTadPosition(pos);
       // NW-flip: trail the stop to the prior 10-bar extreme on the entry TF.
-      if (pos.symbol === snap.symbol) this.trailNwFlipPosition(pos, snap);
+      this.trailNwFlipPosition(pos, posSnap);
       // TP1 trail: once price tags the first target, move the stop to breakeven.
       if (pos.tp1 != null && !pos.beMoved) {
         const tp1Hit = pos.side === 'long' ? candle.high >= pos.tp1 : candle.low <= pos.tp1;

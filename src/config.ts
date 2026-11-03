@@ -58,10 +58,22 @@ export const config = {
   // something other than 'advisor'.
   strategy: str('STRATEGY', 'advisor').toLowerCase(),
 
-  // NW-flip strategy: which timeframes to trade the breakout on ('1h,4h' — 15m
-  // loses in backtest so it is off by default) and the UTC entry-hour whitelist
-  // (the 12–16 UTC London-afternoon / NY-open window carried the edge). Empty
-  // hours = trade any hour.
+  // NW-flip strategy: which symbols to trade the breakout on. Walk-forward
+  // validation (4 chronological OOS folds, 1y, 1h) found the edge robust on
+  // BTC (4/4, PF 1.57) and ETH (4/4, PF 1.50), marginal on SOL (3/4, PF 1.18)
+  // and failing on BNB (2/4, PF 0.90 — excluded). One position per symbol+TF,
+  // capped by MAX_OPEN_POSITIONS. Empty = just the primary SYMBOL.
+  nwFlipSymbols: Array.from(
+    new Set(
+      str('NWFLIP_SYMBOLS', primarySymbol)
+        .split(',')
+        .map((s) => s.trim().toUpperCase())
+        .filter(Boolean),
+    ),
+  ),
+  // Which timeframes to trade the breakout on ('1h,4h' — 15m loses in backtest
+  // so it is off by default) and the UTC entry-hour whitelist (the 12–16 UTC
+  // London-afternoon / NY-open window carried the edge). Empty hours = any hour.
   nwFlipTfs: str('NWFLIP_TFS', '1h,4h')
     .split(',')
     .map((s) => s.trim().toLowerCase())
