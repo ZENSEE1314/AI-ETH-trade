@@ -173,6 +173,19 @@ footer code { background: var(--bg-card); padding: 2px 6px; border-radius: 4px; 
 .live-warning { grid-column: 1 / -1; background: rgba(255,176,32,0.1); border: 1px solid rgba(255,176,32,0.4); color: var(--amber); border-radius: 8px; padding: 12px 14px; font-size: 13px; }
 .btn-logout { background: var(--bg-card); border: 1px solid var(--border); color: var(--muted); border-radius: 8px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
 .btn-logout:hover { color: var(--red); border-color: var(--red); }
+.btn-reset { background: var(--bg-card); border: 1px solid var(--border); color: var(--muted); border-radius: 8px; padding: 6px 14px; font-size: 13px; cursor: pointer; transition: color .15s, border-color .15s; }
+.btn-reset:hover:not(:disabled) { color: var(--amber, #f0a020); border-color: var(--amber, #f0a020); }
+.btn-reset:disabled { opacity: .5; cursor: progress; }
+
+/* ROI card accent + performance summary strip on the Journal tab */
+.roi-card { border-top: 2px solid var(--border); }
+.perf-cards { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+@media (max-width: 1000px) { .perf-cards { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 560px) { .perf-cards { grid-template-columns: 1fr 1fr; } }
+.perf-card { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; display: flex; flex-direction: column; gap: 3px; font-family: var(--mono); }
+.perf-card span { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+.perf-card b { font-size: 22px; }
+.perf-card small { color: var(--muted); font-size: 10px; }
 .user-chip { font-size: 13px; color: var(--muted); margin-right: 4px; }
 
 /* --- Desk (dense trading terminal) --------------------------------------- */

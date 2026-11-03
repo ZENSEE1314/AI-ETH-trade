@@ -26,8 +26,12 @@ function renderState(s) {
   if (!s) return;
   $('equity').textContent = '$' + fmt(s.equity);
   const net = s.stats.netPnlUsdt;
+  const roiPct = s.startEquity > 0 ? (net / s.startEquity) * 100 : 0;
+  $('roi').textContent = signed(roiPct) + '%';
+  $('roi').className = 'value ' + pnlClass(net);
   $('netPnl').textContent = signed(net);
   $('netPnl').className = 'value ' + pnlClass(net);
+  renderPerfSummary(s);
   $('dayPnl').textContent = signed(s.stats.dayPnlUsdt);
   $('dayPnl').className = 'value ' + pnlClass(s.stats.dayPnlUsdt);
   $('bias').textContent = (s.bias || 'neutral').toUpperCase();
@@ -54,6 +58,24 @@ function renderState(s) {
   renderLearned(s.learned);
   renderTad(s.tad, s.openPositions, s.maxOpenPositions);
   window.desk?.state(s);
+}
+
+// Performance summary strip on the Journal tab — ROI + win/loss history.
+function renderPerfSummary(s) {
+  if (!$('jRoi')) return;
+  const st = s.stats;
+  const roiPct = s.startEquity > 0 ? (st.netPnlUsdt / s.startEquity) * 100 : 0;
+  $('jRoi').textContent = signed(roiPct) + '%';
+  $('jRoi').className = pnlClass(st.netPnlUsdt);
+  $('jRoiSub').textContent = 'from $' + fmt(s.startEquity, 0) + ' start';
+  $('jNet').textContent = signed(st.netPnlUsdt);
+  $('jNet').className = pnlClass(st.netPnlUsdt);
+  $('jTrades').textContent = st.totalTrades;
+  $('jWL').textContent = `${st.wins} W / ${st.losses} L`;
+  $('jWin').textContent = fmt(st.winRatePct, 1) + '%';
+  $('jPf').textContent = st.profitFactor === null || st.profitFactor === Infinity ? '∞' : fmt(st.profitFactor, 2);
+  $('jDd').textContent = '-$' + fmt(st.maxDrawdownUsdt);
+  $('jDd').className = st.maxDrawdownUsdt > 0 ? 'neg-pnl' : '';
 }
 
 function renderTad(tad, positions, maxOpen) {
@@ -174,10 +196,11 @@ async function loadJournal() {
   const rows = await fetch(`/api/journal${qs}`, { headers: authHeaders }).then((r) => r.json());
   window.desk?.journal(rows);
   const tb = document.querySelector('#journalTable tbody');
-  if (!rows.length) { tb.innerHTML = '<tr><td colspan="8" class="muted">No trades yet.</td></tr>'; return; }
+  if (!rows.length) { tb.innerHTML = '<tr><td colspan="9" class="muted">No trades yet.</td></tr>'; return; }
   tb.innerHTML = rows.map((t) => `
     <tr>
       <td>${new Date(t.closedAt).toLocaleString()}</td>
+      <td>${(t.symbol || '').replace('USDT', '')}</td>
       <td class="dir ${t.side}">${t.side}</td>
       <td>${fmt(t.entry)}</td><td>${fmt(t.exit)}</td>
       <td>${fmt(t.rMultiple, 2)}</td>
@@ -235,6 +258,21 @@ async function loadUser() {
 $('logoutBtn').addEventListener('click', async () => {
   await fetch('/auth/logout', { method: 'POST' });
   location.href = '/login.html';
+});
+
+$('resetBtn').addEventListener('click', async () => {
+  if (!confirm('Reset the paper account?\n\nThis wipes all open positions, the signal feed and the entire trade history, and returns equity to the starting balance. Cannot be undone.')) return;
+  const btn = $('resetBtn');
+  btn.disabled = true; btn.textContent = 'Resetting…';
+  try {
+    const res = await fetch(`/api/reset${qs}`, { method: 'POST', headers: authHeaders });
+    if (onUnauthorized(res)) return;
+    const data = await res.json();
+    if (data.state) renderState(data.state);
+    await loadJournal();
+  } finally {
+    btn.disabled = false; btn.textContent = '↺ Reset paper';
+  }
 });
 
 // --- Settings -------------------------------------------------------------

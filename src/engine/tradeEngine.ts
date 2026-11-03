@@ -782,6 +782,24 @@ export class TradeEngine extends EventEmitter {
     return true;
   }
 
+  /**
+   * Reset the paper account to a clean slate: drop all open positions, clear
+   * the recent-signals feed and wipe the trade journal. Equity derives from the
+   * journal, so this returns it to the starting equity. Does not touch the
+   * separate Polymarket paper sim, learned config or logs.
+   */
+  resetPaper(): void {
+    this.openPositions = [];
+    this.recentSignals = [];
+    this.journal.reset();
+    this.nwFlipLastBar.clear();
+    this.savePositions();
+    this.saveSignals();
+    logger.info('Paper account reset — positions, signals and journal cleared.');
+    this.emit('update', this.state());
+    this.emit('trade', null);
+  }
+
   state(): EngineState {
     const ctx = this.riskContext();
     const dailyLimit = ctx.equityUsdt * (runtime.maxDailyLossPct / 100);

@@ -81,6 +81,12 @@ app.post('/api/close/:id', requireAuth, (req, res) => {
   res.status(ok ? 200 : 404).json({ ok });
 });
 
+// Wipe the paper account (positions, signals, journal) back to starting equity.
+app.post('/api/reset', requireAuth, (_req, res) => {
+  engine.resetPaper();
+  res.json({ ok: true, state: engine.state() });
+});
+
 // --- SSE stream -----------------------------------------------------------
 app.get('/api/stream', requireAuth, (req, res) => {
   res.writeHead(200, {

@@ -52,33 +52,34 @@ export const config = {
   positionSizePct: num('POSITION_SIZE_PCT', 0),
   // Let the LLM advisor decide entries/stops/targets instead of the engine.
   advisorMode: (process.env.ADVISOR_MODE ?? '').toLowerCase() === 'true',
-  // Active strategy: 'advisor' (LLM), 'vwapbandrsi' (mechanical long-only band
-  // fade), 'nwflip' (NW-band breakout, backtest-validated on 1h/4h), or 'signal'
-  // (the built-in draw-on-liquidity engine). Overrides advisorMode when set to
-  // something other than 'advisor'.
-  strategy: str('STRATEGY', 'advisor').toLowerCase(),
+  // Active strategy: 'nwflip' (NW-band breakout — the main, backtest-validated
+  // edge, default), 'advisor' (LLM), 'vwapbandrsi' (mechanical long-only band
+  // fade), or 'signal' (the built-in draw-on-liquidity engine). Overrides
+  // advisorMode when set to something other than 'advisor'.
+  strategy: str('STRATEGY', 'nwflip').toLowerCase(),
 
   // NW-flip strategy: which symbols to trade the breakout on. Walk-forward
   // validation (4 chronological OOS folds, 1y, 1h) found the edge robust on
   // BTC (4/4, PF 1.57) and ETH (4/4, PF 1.50), marginal on SOL (3/4, PF 1.18)
-  // and failing on BNB (2/4, PF 0.90 — excluded). One position per symbol+TF,
-  // capped by MAX_OPEN_POSITIONS. Empty = just the primary SYMBOL.
+  // and failing on BNB (2/4, PF 0.90 — excluded). BTC+ETH is the main default.
+  // One position per symbol+TF, capped by MAX_OPEN_POSITIONS.
   nwFlipSymbols: Array.from(
     new Set(
-      str('NWFLIP_SYMBOLS', primarySymbol)
+      str('NWFLIP_SYMBOLS', 'BTCUSDT,ETHUSDT')
         .split(',')
         .map((s) => s.trim().toUpperCase())
         .filter(Boolean),
     ),
   ),
-  // Which timeframes to trade the breakout on ('1h,4h' — 15m loses in backtest
-  // so it is off by default) and the UTC entry-hour whitelist (the 12–16 UTC
-  // London-afternoon / NY-open window carried the edge). Empty hours = any hour.
-  nwFlipTfs: str('NWFLIP_TFS', '1h,4h')
+  // Which timeframes to trade the breakout on. Only 1h survived walk-forward
+  // validation (15m loses; 4h is positive but not cross-validated), so 1h is
+  // the default. The UTC entry-hour whitelist defaults to empty (all hours) —
+  // hour/day filtering overfit in testing, so the validated config is all-hours.
+  nwFlipTfs: str('NWFLIP_TFS', '1h')
     .split(',')
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean),
-  nwFlipHours: str('NWFLIP_HOURS', '12,13,14,15,16'),
+  nwFlipHours: str('NWFLIP_HOURS', ''),
   // Month-turn blackout: skip the first/last N calendar days (UTC) of each month
   // (month-end/start chop). 0 = off.
   nwFlipMonthEdgeDays: num('NWFLIP_SKIP_MONTH_EDGE_DAYS', 0),
@@ -109,7 +110,9 @@ export const config = {
   maxDailyLossPct: num('MAX_DAILY_LOSS_PCT', 3.0),
   maxWeeklyLossPct: num('MAX_WEEKLY_LOSS_PCT', 8.0),
   minRiskReward: num('MIN_RISK_REWARD', 2.0),
-  maxOpenPositions: num('MAX_OPEN_POSITIONS', 1),
+  // Default 2 so the two main NW-flip coins (BTC + ETH) can each hold a
+  // position at the same time.
+  maxOpenPositions: num('MAX_OPEN_POSITIONS', 2),
 
   // Strategy
   minConfluence: num('MIN_CONFLUENCE', 60),

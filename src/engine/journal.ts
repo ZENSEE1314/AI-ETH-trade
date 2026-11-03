@@ -41,6 +41,12 @@ export class Journal {
     return [...this.trades].reverse();
   }
 
+  /** Wipe the entire trade history (paper reset). */
+  reset(): void {
+    this.trades = [];
+    this.save();
+  }
+
   dayPnl(): number {
     const since = Date.now() - DAY_MS;
     return this.trades.filter((t) => t.closedAt >= since).reduce((s, t) => s + t.pnlUsdt, 0);

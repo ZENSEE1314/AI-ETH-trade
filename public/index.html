@@ -21,6 +21,7 @@
       <span class="badge" id="liveBadge">live off</span>
       <span class="badge" id="connBadge">connecting…</span>
       <span class="user-chip" id="userChip"></span>
+      <button class="btn-reset" id="resetBtn" title="Wipe paper positions, signals and trade history">↺ Reset paper</button>
       <button class="btn-logout" id="logoutBtn">Log out</button>
     </div>
   </header>
@@ -30,6 +31,7 @@
   <main>
     <section class="cards" aria-label="Account overview">
       <div class="card"><span class="label">Equity</span><span class="value" id="equity">—</span></div>
+      <div class="card roi-card"><span class="label">ROI</span><span class="value" id="roi">—</span></div>
       <div class="card"><span class="label">Net PnL</span><span class="value" id="netPnl">—</span></div>
       <div class="card"><span class="label">Day PnL</span><span class="value" id="dayPnl">—</span></div>
       <div class="card"><span class="label">Bias</span><span class="value" id="bias">—</span></div>
@@ -168,10 +170,21 @@
 
     <section class="tabpane" id="tab-journal">
       <div class="panel">
-        <h2>Trade Journal</h2>
+        <h2>Performance <span class="muted" style="font-size:12px;font-weight:400">— all closed paper trades</span></h2>
+        <div class="perf-cards">
+          <div class="perf-card"><span>ROI</span><b id="jRoi">—</b><small id="jRoiSub">on start equity</small></div>
+          <div class="perf-card"><span>Net P&amp;L</span><b id="jNet">—</b><small>realized</small></div>
+          <div class="perf-card"><span>Trades</span><b id="jTrades">—</b><small id="jWL">— W / — L</small></div>
+          <div class="perf-card"><span>Win rate</span><b id="jWin">—</b><small>wins ÷ trades</small></div>
+          <div class="perf-card"><span>Profit factor</span><b id="jPf">—</b><small>gross win ÷ loss</small></div>
+          <div class="perf-card"><span>Max drawdown</span><b id="jDd">—</b><small>peak-to-trough</small></div>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Trade History</h2>
         <div class="table-wrap">
           <table id="journalTable">
-            <thead><tr><th>Closed</th><th>Side</th><th>Entry</th><th>Exit</th><th>R</th><th>PnL</th><th>Exit</th><th>Mode</th></tr></thead>
+            <thead><tr><th>Closed</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>R</th><th>PnL</th><th>Why</th><th>Mode</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
