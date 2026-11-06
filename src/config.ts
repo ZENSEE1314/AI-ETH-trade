@@ -80,6 +80,14 @@ export const config = {
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean),
   nwFlipHours: str('NWFLIP_HOURS', ''),
+  // Fixed position size for NW-flip, as a multiple of equity (notional ÷ equity).
+  // Backtest sweep (BTC+ETH 1h): 1× = +132%/28%DD, 2× = +330%/49%DD (the
+  // survivable sweet spot), ~5× peaks then over-leverage drag kills it. Margin
+  // committed = sizeX ÷ leverage. 0 = fall back to risk-based sizing.
+  nwFlipSizeX: num('NWFLIP_SIZE_X', 2),
+  // Fixed leverage for NW-flip. Liquidation (~1/lev) must sit beyond the 3% hard
+  // stop; 10× liquidates at ~9.5%, safely clear.
+  nwFlipLeverage: num('NWFLIP_LEVERAGE', 10),
   // Month-turn blackout: skip the first/last N calendar days (UTC) of each month
   // (month-end/start chop). 0 = off.
   nwFlipMonthEdgeDays: num('NWFLIP_SKIP_MONTH_EDGE_DAYS', 0),
@@ -107,8 +115,11 @@ export const config = {
   polyFeePct: num('POLY_FEE_PCT', 1.0),
   // Don't open new sets this close to the window's end.
   polyMinSecondsLeft: num('POLY_MIN_SECONDS_LEFT', 20),
-  maxDailyLossPct: num('MAX_DAILY_LOSS_PCT', 3.0),
-  maxWeeklyLossPct: num('MAX_WEEKLY_LOSS_PCT', 8.0),
+  // Kill-switch caps. Raised to fit 2× NW-flip sizing: one 2× trade stopping out
+  // at the 3% hard stop loses ~6% of equity, which a 3% daily cap would reject
+  // outright. 10%/20% gives the 2× setup room while still halting a bad run.
+  maxDailyLossPct: num('MAX_DAILY_LOSS_PCT', 10.0),
+  maxWeeklyLossPct: num('MAX_WEEKLY_LOSS_PCT', 20.0),
   minRiskReward: num('MIN_RISK_REWARD', 2.0),
   // Default 2 so the two main NW-flip coins (BTC + ETH) can each hold a
   // position at the same time.

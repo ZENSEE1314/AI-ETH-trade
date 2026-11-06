@@ -568,13 +568,15 @@ export class TradeEngine extends EventEmitter {
           }
         }
         const entry = sig.entry;
-        // No fixed target — the trailing stop is the exit. Risk-based sizing
-        // (RISK_PER_TRADE_PCT of equity per stop-out) with leverage cut so the
-        // liquidation sits beyond the stop: at the default 50x a >1.5% stop is
-        // liquidated first, and 10% margin x 50x put 5x equity at risk, so the
-        // risk gate used to reject virtually every NW-flip breakout.
         const risk = Math.abs(entry - sig.stopLoss);
-        const leverage = safeLeverage(risk / entry, runtime.leverage);
+        // Fixed 2× sizing (backtest sweet spot): notional = sizeX × equity, held
+        // at a fixed leverage whose liquidation sits beyond the 3% hard stop.
+        // Margin committed = sizeX ÷ leverage of equity (2÷10 = 20%). sizeX 0
+        // falls back to the old risk-based sizing (leverage cut to clear the stop).
+        const sizeX = config.nwFlipSizeX;
+        const useFixed = sizeX > 0;
+        const leverage = useFixed ? config.nwFlipLeverage : safeLeverage(risk / entry, runtime.leverage);
+        const marginPct = useFixed ? (sizeX / leverage) * 100 : 0;
         const signal: Signal = {
           id: randomUUID(),
           time: Date.now(),
@@ -590,10 +592,12 @@ export class TradeEngine extends EventEmitter {
           reasons: [
             `NW-FLIP ${symbol} ${tf} ${sig.side.toUpperCase()} — close ${round(entry, 2)} broke the ${sig.side === 'long' ? 'upper' : 'lower'} band @ ${round(sig.band, 2)}`,
             `stop: trail(prior 10-bar extreme) @ ${round(sig.stopLoss, 2)} (${((risk / entry) * 100).toFixed(2)}%), hard 3% @ ${round(sig.hardStop, 2)}`,
-            `exit: trailing stop only (no fixed target) · ${leverage}x, risk ${runtime.riskPerTradePct}% of equity`,
+            useFixed
+              ? `exit: trailing stop only · ${sizeX}× size (notional = ${sizeX}× equity) at ${leverage}×, ${marginPct.toFixed(0)}% margin`
+              : `exit: trailing stop only (no fixed target) · ${leverage}x, risk ${runtime.riskPerTradePct}% of equity`,
             ...(kNote ? [`confirm: ${kNote}`] : []),
           ],
-          marginPctOverride: 0,
+          marginPctOverride: marginPct,
           leverageOverride: leverage,
         };
         this.nwFlipLastBar.set(key, sig.barTime);
